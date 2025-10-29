@@ -2,8 +2,9 @@ import json
 import uuid
 import openai
 from typing import List, Any
-from models.state import State
-from client_tool import ClientTool
+
+from core.models.state import State
+from core.client_tool import ClientTool
 
 class Agent:
     def __init__(
@@ -14,7 +15,7 @@ class Agent:
         tools: List[ClientTool] = []
     ):
         self.model = model
-        self.system_prompt = open(f"prompts/base_system.md").read() + extra_instructions
+        self.system_prompt = open(f"core/prompts/base_system.md").read() + extra_instructions
         self.max_steps = max_steps
         # Map tools by name for quick lookup and prepare tool schemas for the LLM
         self.tools = {tool.name: tool for tool in tools}

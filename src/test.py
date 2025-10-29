@@ -1,8 +1,8 @@
 import json
 
-from src.agent import Agent
-from src.client_tool import ClientTool
-from src.tools.math import (
+from core.agent import Agent
+from core.client_tool import ClientTool
+from core.tools.math import (
     sum_numbers,
     multiply_numbers,
     subtract_numbers,
