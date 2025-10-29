@@ -24,20 +24,31 @@ tools = [
 # Create an Agent with the tools
 agent = Agent(
     tools=tools,
-    max_steps=25
+    max_steps=5
 )
 
 # Write the inital prompt
-initial_prompt = "Solve this equation: 2x + 3 = 11"
+initial_prompt = "Solve this equation: x^2 - 5x + 6 = 0"
 
 # Run the agent with the initial prompt
 state = agent.run(initial_prompt)
 
 # Print the final state
+print("==== Launch ====\n")
+
 print("ID:", state.id)
 print("Status:", state.status)
 print("Steps:", state.steps)
 print("Pending Tool Calls:", state.pending_tool_calls)
 print("Final Answer:", state.final_answer)
-
 #print(json.dumps(state.model_dump(), indent=2))
+
+if state.status != "complete":
+    state = agent.resume(state)
+    print("\n==== Resume ====\n")
+    print("ID:", state.id)
+    print("Status:", state.status)
+    print("Steps:", state.steps)
+    print("Pending Tool Calls:", state.pending_tool_calls)
+    print("Final Answer:", state.final_answer)
+    #print(json.dumps(state.model_dump(), indent=2))
