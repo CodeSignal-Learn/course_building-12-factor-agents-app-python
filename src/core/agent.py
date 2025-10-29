@@ -88,8 +88,8 @@ class Agent:
             if function_call.name == "ask_human":
                 # Remove this tool call from state.pending_tool_calls
                 state.pending_tool_calls.remove(function_call)
-                # Set state.status to paused
-                state.status = "paused"
+                # Set state.status to waiting_human_input
+                state.status = "waiting_human_input"
                 # Return state
                 return state
 
@@ -120,12 +120,12 @@ class Agent:
 
         state = State(id=str(uuid.uuid4()), context=context)
 
-        # Call next step until complete or paused
+        # Call next step until complete or waiting_human_input
         while state.status == "running" and state.steps < self.max_steps:
             state = self._next_step(state)
 
         # If max steps reached, set status to max_steps_reached
-        if state.steps == self.max_steps:
+        if state.steps == self.max_steps and state.status != "waiting_human_input":
             state.status = "max_steps_reached"
         
         return state
@@ -134,7 +134,7 @@ class Agent:
         # Set status to running
         state.status = "running"
 
-        # Call next step until complete or paused
+        # Call next step until complete or waiting_human_input
         while state.status == "running" and state.steps < (self.max_steps + state.steps):
             state = self._next_step(state)
         
