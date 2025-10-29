@@ -10,11 +10,13 @@ class Agent:
     def __init__(
         self,
         model: str = "gpt-5",
+        reasoning_effort: str = "low",
         extra_instructions: str = "None",
         max_steps: int = 10,
         tools: List[ClientTool] = []
     ):
         self.model = model
+        self.reasoning_effort = reasoning_effort
         self.system_prompt = open(f"core/prompts/base_system.md").read() + extra_instructions
         self.max_steps = max_steps
         # Map tools by name for quick lookup and prepare tool schemas for the LLM
@@ -40,7 +42,8 @@ class Agent:
             model=self.model,
             instructions=self.system_prompt,
             input=context,
-            tools=self.tool_schemas
+            tools=self.tool_schemas,
+            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
         )
         return response
 
