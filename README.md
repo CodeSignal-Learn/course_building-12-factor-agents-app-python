@@ -1,6 +1,6 @@
-# Building a 12-Factor Agents App
+# Building a 12-Factor Agents App in Python
 
-This project is part of the **"Building a 12-Factor Agents App"** learning path from CodeSignal Learn. It demonstrates how to build reliable, production-ready LLM-powered applications following the 12-Factor Agents methodology.
+This project is part of the **"Building a 12-Factor Agents App in Python"** learning path from CodeSignal Learn. It demonstrates how to build reliable, production-ready LLM-powered applications following the 12-Factor Agents methodology.
 
 ## What are 12-Factor Agents?
 
