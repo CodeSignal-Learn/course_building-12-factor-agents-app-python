@@ -1,6 +1,7 @@
 import json
 import openai
 from typing import List, Any, Optional
+from pathlib import Path
 
 from core.models.state import State
 from core.client_tool import ClientTool
@@ -16,7 +17,8 @@ class Agent:
     ):
         self.model = model
         self.reasoning_effort = reasoning_effort
-        self.system_prompt = open(f"core/prompts/base_system.md").read() + extra_instructions
+        prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
+        self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
         self.max_steps = max_steps
         # Map tools by name for quick lookup and prepare tool schemas for the LLM
         tools = tools or []
