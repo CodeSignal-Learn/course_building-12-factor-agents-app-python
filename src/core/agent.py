@@ -135,8 +135,8 @@ class Agent:
         while state.status == "running" and state.steps < max_steps_allowed:
             state = self._next_step(state)
 
-        # If max steps reached, set status to max_steps_reached
-        if state.steps >= max_steps_allowed and state.status != "waiting_human_input":
+        # If still running and max steps reached, set status to max_steps_reached
+        if state.status == "running" and state.steps >= max_steps_allowed:
             state.status = "max_steps_reached"
         
         return state
