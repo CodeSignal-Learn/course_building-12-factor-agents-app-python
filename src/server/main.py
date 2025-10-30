@@ -2,6 +2,7 @@ from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 import threading
 import uuid
+from typing import Set
 
 from core.models.state import State
 from core.agent import Agent
@@ -36,6 +37,23 @@ app = FastAPI()
 # In-memory database to store states by ID
 state_database: dict[str, State] = {}
 state_lock = threading.Lock()
+# Track which states are currently being executed to prevent concurrent runs
+running_states: Set[str] = set()
+
+
+def _begin_run(state_id: str) -> bool:
+    """Mark a state as running if not already running. Returns True if acquired."""
+    with state_lock:
+        if state_id in running_states:
+            return False
+        running_states.add(state_id)
+        return True
+
+
+def _end_run(state_id: str):
+    """Clear the running mark for a state id."""
+    with state_lock:
+        running_states.discard(state_id)
 
 
 class LaunchRequest(BaseModel):
@@ -47,20 +65,29 @@ class ResumeRequest(BaseModel):
 
 
 def _run_agent_in_background(state_id: str):
-    """Run the agent in a background thread and update the state database"""
-    with state_lock:
-        state = state_database.get(state_id)
-        if state:
-            state.error = None
-
-    if not state:
+    """Run the agent in a background thread and update the state database safely."""
+    if not _begin_run(state_id):
+        # Another execution is already in progress for this state
         return
 
     try:
-        # Run the agent using the same state object stored in the database
-        agent.run(state)
+        with state_lock:
+            original = state_database.get(state_id)
+            if not original:
+                _end_run(state_id)
+                return
+            # Clear previous error and work on a deep copy
+            original.error = None
+            working = original.model_copy(deep=True)
+
+        # Run the agent with the deep copy of the state
+        final_state = agent.run(working)
+
+        # Atomically swap the stored state with the updated copy
+        with state_lock:
+            if state_id in state_database:
+                state_database[state_id] = final_state
     except Exception as e:
-        # Log the error and update state with error status
         import traceback
         print(f"Error in background agent execution: {e}")
         traceback.print_exc()
@@ -69,6 +96,8 @@ def _run_agent_in_background(state_id: str):
                 state_database[state_id].status = "failed"
                 state_database[state_id].error = str(e)
                 state_database[state_id].pending_tool_calls = []
+    finally:
+        _end_run(state_id)
 
 
 @app.post("/agent/launch", response_model=State)
@@ -97,30 +126,41 @@ async def get_state(state_id: str):
         state = state_database.get(state_id)
         if not state:
             raise HTTPException(status_code=404, detail="State not found")
-        return state
+        # Return a deep-copy snapshot to avoid exposing in-progress mutations
+        return state.model_copy(deep=True)
 
 
 @app.post("/agent/resume", response_model=State)
 async def agent_resume(payload: ResumeRequest):
-    # Retrieve state from database
+    # Retrieve and prepare state safely
     with state_lock:
-        state = state_database.get(payload.id)
-        if state:
-            state.error = None
-    if not state:
-        raise HTTPException(status_code=404, detail="State not found")
+        original = state_database.get(payload.id)
+        if original:
+            original.error = None
+        if not original:
+            raise HTTPException(status_code=404, detail="State not found")
+        # Prevent concurrent execution for the same state
+        if payload.id in running_states:
+            raise HTTPException(status_code=409, detail="Agent is already running for this state")
+        # Mark as running and work on a deep copy
+        running_states.add(payload.id)
+        working = original.model_copy(deep=True)
 
     try:
-        # Run agent with the stored state (updates happen in place)
-        final_state = agent.run(state)
+        final_state = agent.run(working)
+        with state_lock:
+            state_database[payload.id] = final_state
     except Exception as e:
         import traceback
         print(f"Error while resuming agent {payload.id}: {e}")
         traceback.print_exc()
         with state_lock:
-            state.status = "failed"
-            state.error = str(e)
-            state.pending_tool_calls = []
+            # Mark failure on the stored state
+            original.status = "failed"
+            original.error = str(e)
+            original.pending_tool_calls = []
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _end_run(payload.id)
 
     return final_state
