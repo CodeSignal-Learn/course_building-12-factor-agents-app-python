@@ -1,8 +1,9 @@
-from fastapi import FastAPI, BackgroundTasks, HTTPException
-from pydantic import BaseModel
 import threading
 import uuid
 from typing import Set
+
+from fastapi import FastAPI, BackgroundTasks, HTTPException
+from pydantic import BaseModel
 
 from core.models.state import State
 from core.agent import Agent
