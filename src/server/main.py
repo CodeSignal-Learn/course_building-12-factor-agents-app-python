@@ -48,13 +48,15 @@ class ResumeRequest(BaseModel):
 
 def _run_agent_in_background(state_id: str):
     """Run the agent in a background thread and update the state database"""
-    try:
-        # Get state from database
-        with state_lock:
-            state = state_database.get(state_id)
-        if not state:
-            return
+    with state_lock:
+        state = state_database.get(state_id)
+        if state:
+            state.error = None
 
+    if not state:
+        return
+
+    try:
         # Run the agent using the same state object stored in the database
         agent.run(state)
     except Exception as e:
@@ -64,8 +66,9 @@ def _run_agent_in_background(state_id: str):
         traceback.print_exc()
         with state_lock:
             if state_id in state_database:
-                state_database[state_id].status = "error"
-                # You might want to add an error field to State model if needed
+                state_database[state_id].status = "failed"
+                state_database[state_id].error = str(e)
+                state_database[state_id].pending_tool_calls = []
 
 
 @app.post("/agent/launch", response_model=State)
@@ -102,10 +105,22 @@ async def agent_resume(payload: ResumeRequest):
     # Retrieve state from database
     with state_lock:
         state = state_database.get(payload.id)
+        if state:
+            state.error = None
     if not state:
         raise HTTPException(status_code=404, detail="State not found")
 
-    # Run agent with the stored state (updates happen in place)
-    final_state = agent.run(state)
+    try:
+        # Run agent with the stored state (updates happen in place)
+        final_state = agent.run(state)
+    except Exception as e:
+        import traceback
+        print(f"Error while resuming agent {payload.id}: {e}")
+        traceback.print_exc()
+        with state_lock:
+            state.status = "failed"
+            state.error = str(e)
+            state.pending_tool_calls = []
+        raise HTTPException(status_code=500, detail=str(e))
 
     return final_state
