@@ -1,33 +1,65 @@
 import json
 import requests
-
-from core.models.state import State
+import time
 
 
 class Client:
-    def __init__(self, url: str):
-        self.url = url
-
-    def send_request(self, payload: dict):
-        response = requests.post(self.url, json=payload)
-        return response.json()
+    def __init__(self, base_url: str = "http://localhost:3000"):
+        self.base_url = base_url
 
     def launch(self, input_prompt: str):
+        """Launch a new agent and return the initial state"""
+        url = f"{self.base_url}/agent/launch"
         payload = {
             "input_prompt": input_prompt
         }
-        return self.send_request(payload)
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
 
-    def resume(self, state: State):
+    def resume(self, state_id: str):
+        """Resume a paused agent by its state ID"""
+        url = f"{self.base_url}/agent/resume"
         payload = {
-            "state": state
+            "id": state_id
         }
-        return self.send_request(payload)
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        return response.json()
+
+    def get_state(self, state_id: str):
+        """Get the current state of an agent by its ID"""
+        url = f"{self.base_url}/agent/state/{state_id}"
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.json()
 
 
 if __name__ == "__main__":
-    client = Client("http://localhost:3000/agent/launch")
-    response = client.launch("Solve this equation: x^2 - 5x + 6 = 0")
-    print(json.dumps(response, indent=2))
+    client = Client("http://localhost:3000")
+    
+    # Launch a new agent
+    state = client.launch("Solve this equation: x^2 - 5x + 6 = 0")
+    print("Launched agent:")
+    print(json.dumps(state, indent=2))
+    
+    # Poll for updates until status is no longer "running"
+    state_id = state["id"]
+    print(f"\nPolling state {state_id}...")
+    
+    while True:
+        current_state = client.get_state(state_id)
+        status = current_state["status"]
+        steps = current_state["steps"]
+        print(f"Status: {status}, Steps: {steps}")
+        
+        if status != "running":
+            final_state = current_state
+            break
+        
+        time.sleep(3)  # Wait 3 seconds before polling again
+    
+    print("\nFinal state:")
+    print(json.dumps(final_state, indent=2))
 
 

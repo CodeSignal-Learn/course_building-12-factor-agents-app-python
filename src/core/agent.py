@@ -1,5 +1,4 @@
 import json
-import uuid
 import openai
 from typing import List, Any
 
@@ -119,34 +118,26 @@ class Agent:
 
         return state
                 
-    def run(self, input: str):     
-        context = [
-            {"role": "user", "content": input},
-        ]
-
-        state = State(id=str(uuid.uuid4()), context=context)
+    def run(self, state: State):
+        """
+        Execute agent steps on a given state.
+        The state should already be initialized with context and status.
+        If state is paused/waiting, it will be set to running and execution will continue.
+        """
+        # Ensure state is set to running
+        if state.status != "running":
+            state.status = "running"
+        
+        # Calculate max steps: if resuming (steps > 0), allow continuing from current step count
+        is_resuming = state.steps > 0
+        max_steps_allowed = (self.max_steps + state.steps) if is_resuming else self.max_steps
 
         # Call next step until complete or waiting_human_input
-        while state.status == "running" and state.steps < self.max_steps:
+        while state.status == "running" and state.steps < max_steps_allowed:
             state = self._next_step(state)
 
         # If max steps reached, set status to max_steps_reached
-        if state.steps == self.max_steps and state.status != "waiting_human_input":
+        if state.steps >= max_steps_allowed and state.status != "waiting_human_input":
             state.status = "max_steps_reached"
         
-        return state
-
-    def resume(self, state: State):
-        # Set status to running
-        state.status = "running"
-
-        # Call next step until complete or waiting_human_input
-        while state.status == "running" and state.steps < (self.max_steps + state.steps):
-            state = self._next_step(state)
-        
-        # If max steps reached, set status to max_steps_reached
-        if state.steps == self.max_steps:
-            state.status = "max_steps_reached"
-
-        # Return state
         return state

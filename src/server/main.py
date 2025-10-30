@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
+import threading
+import uuid
 
 from core.models.state import State
 from core.agent import Agent
@@ -31,6 +33,10 @@ agent = Agent(
 
 app = FastAPI()
 
+# In-memory database to store states by ID
+state_database: dict[str, State] = {}
+state_lock = threading.Lock()
+
 
 class LaunchRequest(BaseModel):
     input_prompt: str
@@ -40,13 +46,66 @@ class ResumeRequest(BaseModel):
     id: str
 
 
+def _run_agent_in_background(state_id: str):
+    """Run the agent in a background thread and update the state database"""
+    try:
+        # Get state from database
+        with state_lock:
+            state = state_database.get(state_id)
+        if not state:
+            return
+
+        # Run the agent using the same state object stored in the database
+        agent.run(state)
+    except Exception as e:
+        # Log the error and update state with error status
+        import traceback
+        print(f"Error in background agent execution: {e}")
+        traceback.print_exc()
+        with state_lock:
+            if state_id in state_database:
+                state_database[state_id].status = "error"
+                # You might want to add an error field to State model if needed
+
+
 @app.post("/agent/launch", response_model=State)
-async def agent_launch(payload: LaunchRequest):
-    final_state = agent.run(payload.input_prompt)
-    return final_state
+async def agent_launch(payload: LaunchRequest, background_tasks: BackgroundTasks):
+    # Create initial state with status "running"
+    context = [
+        {"role": "user", "content": payload.input_prompt},
+    ]
+    initial_state = State(id=str(uuid.uuid4()), context=context, status="running")
+    
+    # Store state in database
+    with state_lock:
+        state_database[initial_state.id] = initial_state
+    
+    # Run agent in background with the state
+    background_tasks.add_task(_run_agent_in_background, initial_state.id)
+    
+    # Return immediately
+    return initial_state
+
+
+@app.get("/agent/state/{state_id}", response_model=State)
+async def get_state(state_id: str):
+    """Get the current state by ID"""
+    with state_lock:
+        state = state_database.get(state_id)
+        if not state:
+            raise HTTPException(status_code=404, detail="State not found")
+        return state
 
 
 @app.post("/agent/resume", response_model=State)
-async def agent_resume(payload: State):
-    final_state = agent.resume(payload)
+async def agent_resume(payload: ResumeRequest):
+    # Retrieve state from database
+    with state_lock:
+        state = state_database.get(payload.id)
+    if not state:
+        raise HTTPException(status_code=404, detail="State not found")
+
+    # Run agent with the stored state (updates happen in place)
+    final_state = agent.run(state)
+
     return final_state
