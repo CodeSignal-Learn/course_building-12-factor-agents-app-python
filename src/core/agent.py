@@ -66,12 +66,6 @@ class Agent:
         # Increment step
         state.steps = state.steps + 1
 
-        # Call LLM
-        response = self._call_llm(state.context)
-
-        # Find all tool calls and assign to state.pending_tool_calls
-        state.pending_tool_calls = [item for item in response.output if item.type == "function_call"]
-
         # Iterate over all pending tool calls
         for function_call in state.pending_tool_calls:
             # Parse the arguments
@@ -113,6 +107,15 @@ class Agent:
             state.pending_tool_calls.remove(function_call)
             # Add the tool result to state.context
             state.context.append(result)
+
+        # Call LLM
+        response = self._call_llm(state.context)
+
+        # Find all tool calls
+        function_calls = [item for item in response.output if item.type == "function_call"]
+
+        # Add new tool calls to state.pending_tool_calls
+        state.pending_tool_calls.extend(function_calls)
 
         return state
                 
