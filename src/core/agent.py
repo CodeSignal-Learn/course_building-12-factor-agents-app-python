@@ -1,6 +1,6 @@
 import json
 import openai
-from typing import List, Any
+from typing import List, Any, Optional
 
 from core.models.state import State
 from core.client_tool import ClientTool
@@ -12,13 +12,14 @@ class Agent:
         reasoning_effort: str = "low",
         extra_instructions: str = "None",
         max_steps: int = 10,
-        tools: List[ClientTool] = []
+        tools: Optional[List[ClientTool]] = None
     ):
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.system_prompt = open(f"core/prompts/base_system.md").read() + extra_instructions
         self.max_steps = max_steps
         # Map tools by name for quick lookup and prepare tool schemas for the LLM
+        tools = tools or []
         self.tools = {tool.name: tool for tool in tools}
         self.tool_schemas = [tool.schema for tool in tools]
         # Built-in tool: final_answer
@@ -65,8 +66,8 @@ class Agent:
         # Increment step
         state.steps = state.steps + 1
 
-        # Iterate over all pending tool calls
-        for function_call in state.pending_tool_calls:
+        # Iterate over a copy to allow safe removal during iteration
+        for function_call in list(state.pending_tool_calls):
             # Parse the arguments
             parsed_args = json.loads(function_call.arguments)
 
