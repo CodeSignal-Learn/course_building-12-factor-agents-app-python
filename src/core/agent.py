@@ -125,8 +125,7 @@ class Agent:
         If state is paused/waiting, it will be set to running and execution will continue.
         """
         # Ensure state is set to running
-        if state.status != "running":
-            state.status = "running"
+        state.status = "running"
         
         # Calculate max steps: if resuming (steps > 0), allow continuing from current step count
         is_resuming = state.steps > 0
