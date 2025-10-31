@@ -1,7 +1,9 @@
+import json
 import logging
 import uuid
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
+from typing import Optional
 
 from core.models.state import State
 from core.agent import Agent
@@ -50,64 +52,90 @@ class ResumeRequest(BaseModel):
     id: str
 
 
-def _run_agent_in_background(state_id: str):
-    """Run the agent in a background thread and update the database"""
-    try:
-        with get_db_session() as session:
-            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
-            if not db_state:
-                return
-            
-            # Ensure status is running (it should be for newly launched states)
-            db_state.status = "running"
-            db_state.error = None
-            session.commit()
-            
-            # Convert to Pydantic and run agent (outside session to avoid long transaction)
-            working_state = db_to_pydantic(db_state)
-        
-        # Define progress callback to save state after each step
-        def save_progress(state: State):
-            with get_db_session() as session:
-                db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
-                if db_state:
-                    db_state.steps = state.steps
-                    db_state.status = state.status
-                    db_state.context = state.context
-                    db_state.pending_tool_calls = state.pending_tool_calls
-                    db_state.error = state.error
-                    db_state.final_answer = state.final_answer
-                    session.commit()
-        
-        # Run agent with progress callback
-        final_state = agent.run(working_state, progress_callback=save_progress)
-        
-        # Final update to ensure everything is saved
+class ProvideInputRequest(BaseModel):
+    id: str
+    answer: str
+
+
+def _create_progress_callback(state_id: str):
+    """Create a progress callback function that saves state after each step"""
+    def save_progress(state: State):
         with get_db_session() as session:
             db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
             if db_state:
-                db_state.steps = final_state.steps
-                db_state.status = final_state.status
-                db_state.context = final_state.context
-                db_state.pending_tool_calls = final_state.pending_tool_calls
-                db_state.error = final_state.error
-                db_state.final_answer = final_state.final_answer
+                db_state.steps = state.steps
+                db_state.status = state.status
+                db_state.context = state.context
+                db_state.pending_tool_calls = state.pending_tool_calls
+                db_state.error = state.error
+                db_state.final_answer = state.final_answer
                 session.commit()
+    return save_progress
+
+
+def _save_state_to_db(state_id: str, state: State):
+    """Save a state to the database"""
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+        if db_state:
+            db_state.steps = state.steps
+            db_state.status = state.status
+            db_state.context = state.context
+            db_state.pending_tool_calls = state.pending_tool_calls
+            db_state.error = state.error
+            db_state.final_answer = state.final_answer
+            session.commit()
+
+
+def _mark_state_failed(state_id: str, error: str):
+    """Mark a state as failed in the database"""
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+        if db_state:
+            db_state.status = "failed"
+            db_state.error = error
+            db_state.pending_tool_calls = []
+            session.commit()
+
+
+def _run_agent_in_background(state_id: str, working_state: Optional[State] = None):
+    """Run the agent in a background thread and update the database"""
+    try:
+        # If working_state not provided, load from database (for launch)
+        if working_state is None:
+            with get_db_session() as session:
+                db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+                if not db_state:
+                    return
+                
+                # Ensure status is running
+                db_state.status = "running"
+                db_state.error = None
+                session.commit()
+                
+                working_state = db_to_pydantic(db_state)
+        else:
+            # working_state provided (for resume/provide_input), ensure DB status is running
+            with get_db_session() as session:
+                db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+                if db_state:
+                    db_state.status = "running"
+                    db_state.error = None
+                    session.commit()
+        
+        # Run agent with progress callback
+        save_progress = _create_progress_callback(state_id)
+        final_state = agent.run(working_state, progress_callback=save_progress)
+        
+        # Final update to ensure everything is saved
+        _save_state_to_db(state_id, final_state)
             
     except Exception as e:
         import traceback
         logger = logging.getLogger(__name__)
         logger.error(f"Error in background agent execution for {state_id}: {e}")
         traceback.print_exc()
-        
-        # Mark as failed in database
-        with get_db_session() as session:
-            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
-            if db_state:
-                db_state.status = "failed"
-                db_state.error = str(e)
-                db_state.pending_tool_calls = []
-                session.commit()
+        _mark_state_failed(state_id, str(e))
 
 
 @app.post("/agent/launch", response_model=State)
@@ -139,8 +167,64 @@ def get_state(state_id: str):
         return db_to_pydantic(db_state)
 
 
+def _get_call_id_from_state(state: State) -> Optional[str]:
+    """Extract the call_id from the last ask_human call in context"""
+    for item in reversed(state.context):
+        if isinstance(item, dict) and item.get("type") == "function_call" and item.get("name") == "ask_human":
+            return item.get("call_id")
+    return None
+
+
+@app.post("/agent/provide_input", response_model=State)
+def provide_input(payload: ProvideInputRequest, background_tasks: BackgroundTasks):
+    """Provide human input to a state waiting for human input and resume execution"""
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+        if not db_state:
+            raise HTTPException(status_code=404, detail="State not found")
+        
+        # Check status while still in session
+        if db_state.status != "waiting_human_input":
+            raise HTTPException(
+                status_code=400,
+                detail=f"State is not waiting for human input. Current status: {db_state.status}"
+            )
+        
+        # Convert to Pydantic while still in session
+        working_state = db_to_pydantic(db_state)
+    
+    # Find the call_id from the last ask_human call
+    call_id = _get_call_id_from_state(working_state)
+    if not call_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Could not find ask_human call in state context"
+        )
+    
+    # Add the human's answer as a function_call_output to context
+    human_response = {
+        "type": "function_call_output",
+        "call_id": call_id,
+        "output": json.dumps({"answer": payload.answer})
+    }
+    working_state.context.append(human_response)
+    
+    # Update state in database with new context
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+        db_state.context = working_state.context
+        db_state.status = "running"  # Change status back to running so agent can continue
+        session.commit()
+    
+    # Run agent in background (non-blocking) - agent was paused, now resume with human input
+    background_tasks.add_task(_run_agent_in_background, payload.id, working_state)
+    
+    # Return updated state immediately
+    return working_state
+
+
 @app.post("/agent/resume", response_model=State)
-def agent_resume(payload: ResumeRequest):
+def agent_resume(payload: ResumeRequest, background_tasks: BackgroundTasks):
     """Resume a paused or interrupted workflow"""
     with get_db_session() as session:
         db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
@@ -149,59 +233,18 @@ def agent_resume(payload: ResumeRequest):
         
         # Prevent concurrent execution
         if db_state.status == "running":
-            raise HTTPException(
-                status_code=409, 
-                detail="Agent is already running for this state"
-            )
+            raise HTTPException(status_code=409, detail="Agent is already running for this state")
+        # Prevent resuming while waiting for human input (use provide_input instead)
+        if db_state.status == "waiting_human_input":
+            raise HTTPException(status_code=400, detail="Agent is waiting for human input")
         
         # Clear error and convert to Pydantic
         db_state.error = None
         session.commit()
-        
         working_state = db_to_pydantic(db_state)
     
-    # Define progress callback to save state after each step
-    def save_progress(state: State):
-        with get_db_session() as session:
-            db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
-            if db_state:
-                db_state.steps = state.steps
-                db_state.status = state.status
-                db_state.context = state.context
-                db_state.pending_tool_calls = state.pending_tool_calls
-                db_state.error = state.error
-                db_state.final_answer = state.final_answer
-                session.commit()
+    # Run agent in background (non-blocking) - agent was paused, now resume
+    background_tasks.add_task(_run_agent_in_background, payload.id, working_state)
     
-    # Run agent (outside session to avoid long transaction)
-    try:
-        final_state = agent.run(working_state, progress_callback=save_progress)
-    except Exception as e:
-        import traceback
-        logger = logging.getLogger(__name__)
-        logger.error(f"Error while resuming agent {payload.id}: {e}")
-        traceback.print_exc()
-        
-        # Update failure in database
-        with get_db_session() as session:
-            db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
-            if db_state:
-                db_state.status = "failed"
-                db_state.error = str(e)
-                db_state.pending_tool_calls = []
-                session.commit()
-        raise HTTPException(status_code=500, detail=str(e))
-    
-    # Save final state to database
-    with get_db_session() as session:
-        db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
-        if db_state:
-            db_state.steps = final_state.steps
-            db_state.status = final_state.status
-            db_state.context = final_state.context
-            db_state.pending_tool_calls = final_state.pending_tool_calls
-            db_state.error = final_state.error
-            db_state.final_answer = final_state.final_answer
-            session.commit()
-    
-    return final_state
+    # Return current state immediately
+    return working_state
