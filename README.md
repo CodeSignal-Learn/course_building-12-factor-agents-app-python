@@ -90,6 +90,12 @@ The API will be available at `http://localhost:3000`.
   - Returns: Updated state after resuming execution
   - Returns `409 Conflict` if the agent is already running for this state
 
+- **`POST /agent/provide_input`** - Provide human input to a workflow waiting for clarification
+  - Request body: `{"id": "state-id", "answer": "your response"}`
+  - Returns: Updated state after processing the input and resuming execution
+  - Only works when state status is `"waiting_human_input"`
+  - Automatically resumes agent execution after receiving the input
+
 ## Running the Client
 
 The example client demonstrates how to interact with the agent API:
@@ -98,6 +104,19 @@ The example client demonstrates how to interact with the agent API:
 cd src
 python -m client.main
 ```
+
+### Human-in-the-Loop Workflow
+
+When an agent needs clarification or additional information, it can call the built-in `ask_human` tool. The workflow:
+
+1. **Agent calls `ask_human`** → State status becomes `"waiting_human_input"`
+2. **Client detects the status** during polling
+3. **Client prompts user** using the `ask_human_cli` function (reused from test utilities)
+4. **User provides answer** via command line input
+5. **Client submits answer** to `/agent/provide_input` endpoint
+6. **Agent continues execution** with the provided input
+
+The example client handles this automatically, but you can integrate the same pattern into any client application.
 
 ## Project Structure
 
@@ -111,7 +130,8 @@ src/
 │   ├── prompts/
 │   │   └── base_system.md  # System prompt template
 │   └── tools/              # Available tools
-│       └── math.py         # Example math tools
+│       ├── math.py         # Example math tools
+│       └── human_interaction.py  # Human input CLI utility
 ├── server/                  # FastAPI server
 │   ├── main.py             # API endpoints and background task management
 │   └── database.py         # SQLAlchemy models and database session management
@@ -135,15 +155,6 @@ src/
 - **Concurrency Safety**: Database transactions and status checks prevent race conditions
 - **Structured Logging**: Comprehensive logging at INFO level for debugging and monitoring
 
-## Notes
-
-- Always run commands from the `src` directory or set `PYTHONPATH=src` so imports work correctly
-- The agent uses a maximum step limit to prevent infinite loops (default: 25 steps, configurable)
-- State is automatically persisted to SQLite database (`agent_states.db`) and can be resumed
-- Tool calls are validated against schemas before execution
-- The agent converts SDK objects to JSON-serializable dicts automatically for database storage
-- Background tasks provide non-blocking agent execution with real-time progress updates
-- The client example demonstrates polling patterns for monitoring agent progress
 
 ## Testing
 
