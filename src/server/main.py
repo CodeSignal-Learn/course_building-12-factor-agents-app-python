@@ -1,7 +1,5 @@
-import threading
+import logging
 import uuid
-from typing import Set
-
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
@@ -15,6 +13,14 @@ from core.tools.math import (
     divide_numbers,
     power,
     square_root,
+)
+from server.database import get_db_session, StateModel, pydantic_to_db, db_to_pydantic
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
 
 # Create a list of ClientTools with the given functions
@@ -35,27 +41,6 @@ agent = Agent(
 
 app = FastAPI()
 
-# In-memory database to store states by ID
-state_database: dict[str, State] = {}
-state_lock = threading.Lock()
-# Track which states are currently being executed to prevent concurrent runs
-running_states: Set[str] = set()
-
-
-def _begin_run(state_id: str) -> bool:
-    """Mark a state as running if not already running. Returns True if acquired."""
-    with state_lock:
-        if state_id in running_states:
-            return False
-        running_states.add(state_id)
-        return True
-
-
-def _end_run(state_id: str):
-    """Clear the running mark for a state id."""
-    with state_lock:
-        running_states.discard(state_id)
-
 
 class LaunchRequest(BaseModel):
     input_prompt: str
@@ -66,102 +51,157 @@ class ResumeRequest(BaseModel):
 
 
 def _run_agent_in_background(state_id: str):
-    """Run the agent in a background thread and update the state database safely."""
-    if not _begin_run(state_id):
-        # Another execution is already in progress for this state
-        return
-
+    """Run the agent in a background thread and update the database"""
     try:
-        with state_lock:
-            original = state_database.get(state_id)
-            if not original:
-                _end_run(state_id)
+        with get_db_session() as session:
+            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+            if not db_state:
                 return
-            # Clear previous error and work on a deep copy
-            original.error = None
-            working = original.model_copy(deep=True)
-
-        # Run the agent with the deep copy of the state
-        final_state = agent.run(working)
-
-        # Atomically swap the stored state with the updated copy
-        with state_lock:
-            if state_id in state_database:
-                state_database[state_id] = final_state
+            
+            # Ensure status is running (it should be for newly launched states)
+            db_state.status = "running"
+            db_state.error = None
+            session.commit()
+            
+            # Convert to Pydantic and run agent (outside session to avoid long transaction)
+            working_state = db_to_pydantic(db_state)
+        
+        # Define progress callback to save state after each step
+        def save_progress(state: State):
+            with get_db_session() as session:
+                db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+                if db_state:
+                    db_state.steps = state.steps
+                    db_state.status = state.status
+                    db_state.context = state.context
+                    db_state.pending_tool_calls = state.pending_tool_calls
+                    db_state.error = state.error
+                    db_state.final_answer = state.final_answer
+                    session.commit()
+        
+        # Run agent with progress callback
+        final_state = agent.run(working_state, progress_callback=save_progress)
+        
+        # Final update to ensure everything is saved
+        with get_db_session() as session:
+            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+            if db_state:
+                db_state.steps = final_state.steps
+                db_state.status = final_state.status
+                db_state.context = final_state.context
+                db_state.pending_tool_calls = final_state.pending_tool_calls
+                db_state.error = final_state.error
+                db_state.final_answer = final_state.final_answer
+                session.commit()
+            
     except Exception as e:
         import traceback
-        print(f"Error in background agent execution: {e}")
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in background agent execution for {state_id}: {e}")
         traceback.print_exc()
-        with state_lock:
-            if state_id in state_database:
-                state_database[state_id].status = "failed"
-                state_database[state_id].error = str(e)
-                state_database[state_id].pending_tool_calls = []
-    finally:
-        _end_run(state_id)
+        
+        # Mark as failed in database
+        with get_db_session() as session:
+            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+            if db_state:
+                db_state.status = "failed"
+                db_state.error = str(e)
+                db_state.pending_tool_calls = []
+                session.commit()
 
 
 @app.post("/agent/launch", response_model=State)
-async def agent_launch(payload: LaunchRequest, background_tasks: BackgroundTasks):
-    # Create initial state with status "running"
-    context = [
-        {"role": "user", "content": payload.input_prompt},
-    ]
+def agent_launch(payload: LaunchRequest, background_tasks: BackgroundTasks):
+    """Launch a new agent workflow"""
+    # Create initial state
+    context = [{"role": "user", "content": payload.input_prompt}]
     initial_state = State(id=str(uuid.uuid4()), context=context, status="running")
     
-    # Store state in database
-    with state_lock:
-        state_database[initial_state.id] = initial_state
+    # Save to database
+    with get_db_session() as session:
+        db_state = pydantic_to_db(initial_state)
+        session.add(db_state)
+        session.commit()
     
-    # Run agent in background with the state
+    # Run agent in background
     background_tasks.add_task(_run_agent_in_background, initial_state.id)
     
-    # Return immediately
     return initial_state
 
 
 @app.get("/agent/state/{state_id}", response_model=State)
-async def get_state(state_id: str):
+def get_state(state_id: str):
     """Get the current state by ID"""
-    with state_lock:
-        state = state_database.get(state_id)
-        if not state:
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+        if not db_state:
             raise HTTPException(status_code=404, detail="State not found")
-        # Return a deep-copy snapshot to avoid exposing in-progress mutations
-        return state.model_copy(deep=True)
+        return db_to_pydantic(db_state)
 
 
 @app.post("/agent/resume", response_model=State)
-async def agent_resume(payload: ResumeRequest):
-    # Retrieve and prepare state safely
-    with state_lock:
-        original = state_database.get(payload.id)
-        if original:
-            original.error = None
-        if not original:
+def agent_resume(payload: ResumeRequest):
+    """Resume a paused or interrupted workflow"""
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+        if not db_state:
             raise HTTPException(status_code=404, detail="State not found")
-        # Prevent concurrent execution for the same state
-        if payload.id in running_states:
-            raise HTTPException(status_code=409, detail="Agent is already running for this state")
-        # Mark as running and work on a deep copy
-        running_states.add(payload.id)
-        working = original.model_copy(deep=True)
-
+        
+        # Prevent concurrent execution
+        if db_state.status == "running":
+            raise HTTPException(
+                status_code=409, 
+                detail="Agent is already running for this state"
+            )
+        
+        # Clear error and convert to Pydantic
+        db_state.error = None
+        session.commit()
+        
+        working_state = db_to_pydantic(db_state)
+    
+    # Define progress callback to save state after each step
+    def save_progress(state: State):
+        with get_db_session() as session:
+            db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+            if db_state:
+                db_state.steps = state.steps
+                db_state.status = state.status
+                db_state.context = state.context
+                db_state.pending_tool_calls = state.pending_tool_calls
+                db_state.error = state.error
+                db_state.final_answer = state.final_answer
+                session.commit()
+    
+    # Run agent (outside session to avoid long transaction)
     try:
-        final_state = agent.run(working)
-        with state_lock:
-            state_database[payload.id] = final_state
+        final_state = agent.run(working_state, progress_callback=save_progress)
     except Exception as e:
         import traceback
-        print(f"Error while resuming agent {payload.id}: {e}")
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error while resuming agent {payload.id}: {e}")
         traceback.print_exc()
-        with state_lock:
-            # Mark failure on the stored state
-            original.status = "failed"
-            original.error = str(e)
-            original.pending_tool_calls = []
+        
+        # Update failure in database
+        with get_db_session() as session:
+            db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+            if db_state:
+                db_state.status = "failed"
+                db_state.error = str(e)
+                db_state.pending_tool_calls = []
+                session.commit()
         raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        _end_run(payload.id)
-
+    
+    # Save final state to database
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+        if db_state:
+            db_state.steps = final_state.steps
+            db_state.status = final_state.status
+            db_state.context = final_state.context
+            db_state.pending_tool_calls = final_state.pending_tool_calls
+            db_state.error = final_state.error
+            db_state.final_answer = final_state.final_answer
+            session.commit()
+    
     return final_state

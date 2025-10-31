@@ -48,16 +48,26 @@ if __name__ == "__main__":
     print(f"\nPolling state {state_id}...")
     
     while True:
-        current_state = client.get_state(state_id)
-        status = current_state["status"]
-        steps = current_state["steps"]
-        print(f"Status: {status}, Steps: {steps}")
-        
-        if status != "running":
-            final_state = current_state
+        try:
+            current_state = client.get_state(state_id)
+            status = current_state["status"]
+            steps = current_state["steps"]
+            print(f"Status: {status}, Steps: {steps}")
+            
+            # Handle terminal states
+            if status == "failed":
+                print(f"Agent failed: {current_state.get('error', 'Unknown error')}")
+                final_state = current_state
+                break
+            
+            if status != "running":
+                final_state = current_state
+                break
+            
+            time.sleep(10)  # Wait 10 seconds before polling again
+        except requests.exceptions.HTTPError as e:
+            print(f"Error polling state: {e}")
             break
-        
-        time.sleep(3)  # Wait 3 seconds before polling again
     
     print("\nFinal state:")
     print(json.dumps(final_state, indent=2))
