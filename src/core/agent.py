@@ -38,6 +38,20 @@ class Agent:
                 "additionalProperties": False
             }
         })
+        # Built-in tool: ask_human
+        self.tool_schemas.append({
+            "type": "function",
+            "name": "ask_human",
+            "description": "Ask the user for clarification or additional information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "question": {"type": "string", "description": "The question or prompt to ask the user"}
+                },
+                "required": ["question"],
+                "additionalProperties": False
+            }
+        })
 
     def _call_llm(self, context: List[Any]):
         response = openai.responses.create(
