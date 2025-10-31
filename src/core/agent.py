@@ -1,6 +1,7 @@
 import json
 import openai
-from typing import List, Any
+from typing import List, Any, Optional
+from pathlib import Path
 
 from core.models.state import State
 from core.client_tool import ClientTool
@@ -12,13 +13,15 @@ class Agent:
         reasoning_effort: str = "low",
         extra_instructions: str = "None",
         max_steps: int = 10,
-        tools: List[ClientTool] = []
+        tools: Optional[List[ClientTool]] = None
     ):
         self.model = model
         self.reasoning_effort = reasoning_effort
-        self.system_prompt = open(f"core/prompts/base_system.md").read() + extra_instructions
+        prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
+        self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
         self.max_steps = max_steps
         # Map tools by name for quick lookup and prepare tool schemas for the LLM
+        tools = tools or []
         self.tools = {tool.name: tool for tool in tools}
         self.tool_schemas = [tool.schema for tool in tools]
         # Built-in tool: final_answer
@@ -47,10 +50,11 @@ class Agent:
         return response
 
     def _call_tool(self, function_call):
-        # Get tool name, id and input
-        tool_name = function_call.name
-        call_id = function_call.call_id
-        tool_input = json.loads(function_call.arguments)
+        # Get tool name, id and input (handle both dict and object)
+        tool_name = function_call["name"]
+        call_id = function_call["call_id"]
+        tool_input = function_call["arguments"]
+
 
         # Execute tool and handle errors
         try:
@@ -65,23 +69,25 @@ class Agent:
         # Increment step
         state.steps = state.steps + 1
 
-        # Iterate over all pending tool calls
-        for function_call in state.pending_tool_calls:
-            # Parse the arguments
-            parsed_args = json.loads(function_call.arguments)
+        # Iterate over a copy to allow safe removal during iteration
+        for function_call in list(state.pending_tool_calls):
+            # Get the call name, arguments and id
+            call_name = function_call["name"]
+            call_arguments = function_call["arguments"]
+            call_id = function_call["call_id"]
 
-            # Add the tool call to state.context
+            # Add the tool call to state.context (serialize arguments to JSON for storage)
             state.context.append(
                 {
                     "type": "function_call",
-                    "name": function_call.name,
-                    "arguments": function_call.arguments,
-                    "call_id": function_call.call_id,
+                    "name": call_name,
+                    "arguments": json.dumps(call_arguments),  # Serialize dict to JSON string
+                    "call_id": call_id,
                 }
             )
 
             # If called ask_human tool
-            if function_call.name == "ask_human":
+            if call_name == "ask_human":
                 # Remove this tool call from state.pending_tool_calls
                 state.pending_tool_calls.remove(function_call)
                 # Set state.status to waiting_human_input
@@ -90,18 +96,23 @@ class Agent:
                 return state
 
             # If called final_answer tool
-            if function_call.name == "final_answer":
+            if call_name == "final_answer":
                 # Set state.pending_tool_calls to empty list
                 state.pending_tool_calls = []
                 # Set state.status to complete
                 state.status = "complete"
                 # Persist the final answer on the state
-                state.final_answer = parsed_args.get("answer") or None
+                state.final_answer = call_arguments.get("answer") or None
                 # Return state
                 return state
 
-            # Call the regular tool 
-            result = self._call_tool(function_call)
+            # Call the regular tool (convert to dict format)
+            tool_call_dict = {
+                "name": call_name,
+                "arguments": call_arguments,
+                "call_id": call_id
+            }
+            result = self._call_tool(tool_call_dict)
             # Remove this tool call from state.pending_tool_calls
             state.pending_tool_calls.remove(function_call)
             # Add the tool result to state.context
@@ -110,19 +121,34 @@ class Agent:
         # Call LLM
         response = self._call_llm(state.context)
 
-        # Find all tool calls
+        # Find all tool calls and convert to dicts for JSON serialization
         function_calls = [item for item in response.output if item.type == "function_call"]
+        
+        # Convert SDK objects to plain dicts for storage
+        function_call_dicts = [
+            {
+                "name": fc.name,
+                "arguments": json.loads(fc.arguments),  # Parse once, store as dict
+                "call_id": fc.call_id,
+                "type": fc.type,
+            }
+            for fc in function_calls
+        ]
 
         # Add new tool calls to state.pending_tool_calls
-        state.pending_tool_calls.extend(function_calls)
+        state.pending_tool_calls.extend(function_call_dicts)
 
         return state
                 
-    def run(self, state: State):
+    def run(self, state: State, progress_callback=None):
         """
         Execute agent steps on a given state.
         The state should already be initialized with context and status.
         If state is paused/waiting, it will be set to running and execution will continue.
+        
+        Args:
+            state: The state to run
+            progress_callback: Optional callback(state) called after each step
         """
         # Ensure state is set to running
         state.status = "running"
@@ -134,9 +160,12 @@ class Agent:
         # Call next step until complete or waiting_human_input
         while state.status == "running" and state.steps < max_steps_allowed:
             state = self._next_step(state)
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(state)
 
-        # If max steps reached, set status to max_steps_reached
-        if state.steps >= max_steps_allowed and state.status != "waiting_human_input":
+        # If still running and max steps reached, set status to max_steps_reached
+        if state.status == "running" and state.steps >= max_steps_allowed:
             state.status = "max_steps_reached"
         
         return state
