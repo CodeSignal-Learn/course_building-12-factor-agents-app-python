@@ -2,6 +2,7 @@ import json
 import logging
 import uuid
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
@@ -38,10 +39,19 @@ tools = [
 # Create an Agent with the tools
 agent = Agent(
     tools=tools,
-    max_steps=25
+    max_steps=10
 )
 
 app = FastAPI()
+
+# Add CORS middleware to allow frontend to communicate with the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],  # UI dev server
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class LaunchRequest(BaseModel):

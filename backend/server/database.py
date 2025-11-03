@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from sqlalchemy import create_engine, Column, String, Integer, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
@@ -23,7 +24,10 @@ class StateModel(Base):
 
 
 # SQLite database (file-based, perfect for development)
-engine = create_engine("sqlite:///./agent_states.db", echo=False)
+# Database file is stored in backend/data/ directory
+db_path = Path(__file__).resolve().parent.parent / "data" / "agent_states.db"
+db_path.parent.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
+engine = create_engine(f"sqlite:///{db_path}", echo=False)
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(bind=engine)
 

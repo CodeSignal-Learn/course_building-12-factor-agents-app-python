@@ -34,45 +34,71 @@ This project implements a production-ready AI agent system that demonstrates the
 
 ### Architecture
 
-The project is organized into three main components:
+The project is organized into four main components:
 
-- **`core/`** - Core agent logic, state management, and tool definitions
-- **`server/`** - FastAPI server exposing REST endpoints for agent operations with SQLite database persistence
-- **`client/`** - Example HTTP client demonstrating agent usage
+- **`backend/core/`** - Core agent logic, state management, and tool definitions
+- **`backend/server/`** - FastAPI server exposing REST endpoints for agent operations with SQLite database persistence
+- **`backend/client/`** - Example HTTP client demonstrating agent usage
+- **`frontend/`** - React web UI for managing and monitoring agents
 
 The agent follows a stateless reducer pattern: it takes an input state and event, processes them through controlled steps, and produces an output state. All state is explicitly managed and persisted to a SQLite database, allowing workflows to be resumed, inspected, or debugged at any point. The server provides real-time progress updates as the agent executes.
 
 ## Requirements
 
 - Python 3.10+
+- Node.js 16+ and npm (for frontend UI)
 - OpenAI API key (set as environment variable `OPENAI_API_KEY`)
 
 ## Installation
 
-1. Install dependencies:
+1. Install Python dependencies:
 
 ```bash
+cd backend
 pip install -r requirements.txt
+cd ..
 ```
 
-2. Set your OpenAI API key:
+2. Install frontend dependencies:
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+3. Set your OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY="your-api-key-here"
 ```
 
-## Running the Server
+## Quick Start
 
-Start the FastAPI server from the `src` directory:
+You can start both the backend and frontend servers with a single command:
 
 ```bash
-cd src
-python -m uvicorn server.main:app --host 0.0.0.0 --port 3000 --reload
+./start.sh
 ```
 
-The API will be available at `http://localhost:3000`.
+This will start:
+- Backend API server on `http://localhost:8000`
+- Frontend UI on `http://localhost:3000`
 
-**Note:** The server automatically creates a SQLite database file (`agent_states.db`) in the `src` directory to persist agent states. This enables state recovery, inspection, and resuming interrupted workflows.
+Press `Ctrl+C` to stop both servers.
+
+## Running the Server
+
+Start the FastAPI server from the `backend` directory:
+
+```bash
+cd backend
+python -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+The API will be available at `http://localhost:8000`.
+
+**Note:** The server automatically creates a SQLite database file (`agent_states.db`) in the `backend/data/` directory to persist agent states. This enables state recovery, inspection, and resuming interrupted workflows.
 
 ### API Endpoints
 
@@ -101,7 +127,7 @@ The API will be available at `http://localhost:3000`.
 The example client demonstrates how to interact with the agent API:
 
 ```bash
-cd src
+cd backend
 python -m client.main
 ```
 
@@ -118,10 +144,43 @@ When an agent needs clarification or additional information, it can call the bui
 
 The example client handles this automatically, but you can integrate the same pattern into any client application.
 
+## Running the Web UI
+
+A modern React-based web interface is available for managing and monitoring agents:
+
+1. **Install frontend dependencies** (first time only):
+
+```bash
+cd frontend
+npm install
+```
+
+2. **Start the development server**:
+
+```bash
+npm run dev
+```
+
+The UI will be available at `http://localhost:3000`.
+
+**Note:** Make sure the backend server is running on `http://localhost:8000` before using the UI.
+
+### UI Features
+
+- **Launch Agents**: Submit natural language tasks through an intuitive form
+- **Real-Time Monitoring**: Watch agent execution progress with automatic updates
+- **Execution History**: View all past agent executions in a sidebar
+- **Detailed Execution View**: See step-by-step context, tool calls, and outputs
+- **Human-in-the-Loop**: Interactive dialog appears automatically when agents need input
+- **Status Indicators**: Visual badges for running, complete, failed, and waiting states
+- **Resume Workflows**: One-click resume for paused or interrupted agents (including `max_steps_reached` status)
+
+The UI communicates with the FastAPI backend through REST API calls and polls for updates automatically.
+
 ## Project Structure
 
 ```
-src/
+backend/                     # Backend Python code
 ├── core/                    # Core agent implementation
 │   ├── agent.py            # Main agent class with progress callbacks
 │   ├── client_tool.py      # Tool abstraction
@@ -137,7 +196,25 @@ src/
 │   └── database.py         # SQLAlchemy models and database session management
 ├── client/                 # Example client
 │   └── main.py             # HTTP client with polling demonstration
-└── test.py                 # Local test script for direct agent execution
+├── tests/                  # Tests
+│   └── test_agent.py       # Local test script for direct agent execution
+├── data/                   # Runtime data (database files)
+│   └── agent_states.db     # SQLite database (gitignored)
+└── requirements.txt        # Python dependencies
+frontend/                    # React web UI
+├── src/
+│   ├── components/         # React components
+│   │   ├── TaskForm.jsx    # Task submission form
+│   │   ├── AgentStatus.jsx # Status display component
+│   │   ├── ExecutionView.jsx # Execution context viewer
+│   │   ├── HumanInputDialog.jsx # Human input modal
+│   │   └── AgentHistory.jsx # Agent history sidebar
+│   ├── api/                # API client
+│   │   └── client.js       # HTTP client for backend communication
+│   ├── App.jsx             # Main application component
+│   └── main.jsx            # Application entry point
+├── package.json            # Frontend dependencies
+└── vite.config.js          # Vite configuration
 ```
 
 ## Key Features
@@ -148,7 +225,7 @@ src/
 - **Unified State**: Execution and business state combined in a single source of truth
 - **State Persistence**: SQLite database stores all agent states for recovery and inspection
 - **Real-Time Progress**: Progress callbacks update the database after each step for live monitoring
-- **Controlled Execution**: Explicit control flow with step limits and status tracking
+- **Controlled Execution**: Explicit control flow with configurable step limits (default: 10 steps, configurable per agent instance) and status tracking
 - **Human-in-the-Loop**: Built-in support for requesting human input when needed
 - **Stateless Design**: Agent acts as a pure reducer function for easy scaling
 - **API-First**: RESTful API allows integration from any interface
@@ -161,11 +238,11 @@ src/
 You can test the agent directly without the server:
 
 ```bash
-cd src
-python test.py
+cd backend
+python -m tests.test_agent
 ```
 
-This runs the agent locally and demonstrates the core execution flow.
+This runs the agent locally and demonstrates the core execution flow. The agent will prompt for input if it needs clarification.
 
 ## Learning Path
 

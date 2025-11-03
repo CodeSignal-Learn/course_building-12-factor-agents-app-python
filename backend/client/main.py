@@ -7,7 +7,7 @@ from core.tools.human_interaction import ask_human_cli
 
 
 class Client:
-    def __init__(self, base_url: str = "http://localhost:3000"):
+    def __init__(self, base_url: str = "http://localhost:8000"):
         self.base_url = base_url
 
     def launch(self, input_prompt: str) -> Dict[str, Any]:
@@ -123,7 +123,7 @@ def poll_until_complete(client: Client, state_id: str, poll_interval: float = 5.
 
 def main():
     """Main entry point for the client"""
-    client = Client("http://localhost:3000")
+    client = Client("http://localhost:8000")
     
     # Launch a new agent
     prompt = "Solve the roots of this equation: x^2 - 5x + 6 = "

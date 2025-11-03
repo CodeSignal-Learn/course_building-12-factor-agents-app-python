@@ -1,9 +1,38 @@
-# Cache files
+# Python cache files
 __pycache__/
 *.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+venv/
+env/
+ENV/
 
 # Mac files
 .DS_Store
 
-# Database
+# Database files (runtime data)
 *.db
+*.sqlite
+*.sqlite3
+
+# Backend data directory (runtime files)
+backend/data/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
+
+# Log files
+*.log
+backend.log
+frontend.log

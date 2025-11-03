@@ -16,8 +16,8 @@ from core.tools.math import (
 )
 from core.tools.human_interaction import ask_human_cli
 
-# Ensure working directory is the src/ folder so relative prompt paths resolve
-os.chdir(Path(__file__).resolve().parent)
+# Ensure working directory is the backend/ folder so relative prompt paths resolve
+os.chdir(Path(__file__).resolve().parent.parent)
 
 
 def build_agent() -> Agent:
