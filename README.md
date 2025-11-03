@@ -51,17 +51,41 @@ The agent follows a stateless reducer pattern: it takes an input state and event
 
 ## Installation
 
-1. Install dependencies:
+1. Install Python dependencies:
 
 ```bash
+cd backend
 pip install -r requirements.txt
+cd ..
 ```
 
-2. Set your OpenAI API key:
+2. Install frontend dependencies:
+
+```bash
+cd frontend
+npm install
+cd ..
+```
+
+3. Set your OpenAI API key:
 
 ```bash
 export OPENAI_API_KEY="your-api-key-here"
 ```
+
+## Quick Start
+
+You can start both the backend and frontend servers with a single command:
+
+```bash
+./start.sh
+```
+
+This will start:
+- Backend API server on `http://localhost:8000`
+- Frontend UI on `http://localhost:3000`
+
+Press `Ctrl+C` to stop both servers.
 
 ## Running the Server
 
@@ -174,8 +198,9 @@ backend/                     # Backend Python code
 │   └── main.py             # HTTP client with polling demonstration
 ├── tests/                  # Tests
 │   └── test_agent.py       # Local test script for direct agent execution
-└── data/                   # Runtime data (database files)
-    └── agent_states.db     # SQLite database (gitignored)
+├── data/                   # Runtime data (database files)
+│   └── agent_states.db     # SQLite database (gitignored)
+└── requirements.txt        # Python dependencies
 frontend/                    # React web UI
 ├── src/
 │   ├── components/         # React components

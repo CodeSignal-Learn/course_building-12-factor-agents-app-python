@@ -31,3 +31,8 @@ backend/data/
 # Environment variables
 .env
 .env.local
+
+# Log files
+*.log
+backend.log
+frontend.log
