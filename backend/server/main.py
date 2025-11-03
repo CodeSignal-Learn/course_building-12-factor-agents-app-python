@@ -68,18 +68,34 @@ class ProvideInputRequest(BaseModel):
     answer: str
 
 
+class PauseRequest(BaseModel):
+    id: str
+
+
 def _create_progress_callback(state_id: str):
     """Create a progress callback function that saves state after each step"""
     def save_progress(state: State):
         with get_db_session() as session:
             db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
             if db_state:
-                db_state.steps = state.steps
-                db_state.status = state.status
-                db_state.context = state.context
-                db_state.pending_tool_calls = state.pending_tool_calls
-                db_state.error = state.error
-                db_state.final_answer = state.final_answer
+                # Check if status was changed to "paused" externally (before overwriting)
+                if db_state.status == "paused":
+                    # Update local state to paused so agent loop will exit
+                    state.status = "paused"
+                    # Don't overwrite the paused status - just save other fields
+                    db_state.steps = state.steps
+                    db_state.context = state.context
+                    db_state.pending_tool_calls = state.pending_tool_calls
+                    db_state.error = state.error
+                    db_state.final_answer = state.final_answer
+                else:
+                    # Normal save - update all fields including status
+                    db_state.steps = state.steps
+                    db_state.status = state.status
+                    db_state.context = state.context
+                    db_state.pending_tool_calls = state.pending_tool_calls
+                    db_state.error = state.error
+                    db_state.final_answer = state.final_answer
                 session.commit()
     return save_progress
 
@@ -232,6 +248,29 @@ def provide_input(payload: ProvideInputRequest, background_tasks: BackgroundTask
     
     # Return updated state immediately
     return working_state
+
+
+@app.post("/agent/pause", response_model=State)
+def agent_pause(payload: PauseRequest):
+    """Pause a running agent workflow"""
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == payload.id).first()
+        if not db_state:
+            raise HTTPException(status_code=404, detail="State not found")
+        
+        # Only allow pausing if agent is currently running
+        if db_state.status != "running":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot pause agent. Current status: {db_state.status}. Only agents with status 'running' can be paused."
+            )
+        
+        # Set status to paused
+        db_state.status = "paused"
+        session.commit()
+        
+        # Return updated state
+        return db_to_pydantic(db_state)
 
 
 @app.post("/agent/resume", response_model=State)
