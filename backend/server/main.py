@@ -45,10 +45,11 @@ agent = Agent(
 app = FastAPI()
 
 # Add CORS middleware to allow frontend to communicate with the API
+# Allow all origins for preview/proxy environments (can be restricted in production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # UI dev server
-    allow_credentials=True,
+    allow_origins=["*"],  # Allow all origins (for preview/proxy environments)
+    allow_credentials=False,  # Must be False when allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
 )

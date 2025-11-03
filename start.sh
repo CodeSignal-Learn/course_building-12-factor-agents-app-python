@@ -56,7 +56,7 @@ echo -e "${BLUE}========================================${NC}\n"
 # Start backend server
 echo -e "${GREEN}Starting backend server on port 8000...${NC}"
 cd backend
-python3 -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload > ../backend.log 2>&1 &
+python3 -m uvicorn server.main:app --host 0.0.0.0 --port 8000 > ../backend.log 2>&1 &
 BACKEND_PID=$!
 cd ..
 
@@ -72,8 +72,8 @@ fi
 
 echo -e "${GREEN}✓ Backend server started (PID: $BACKEND_PID)${NC}\n"
 
-# Start frontend dev server
-echo -e "${GREEN}Starting frontend dev server on port 3000...${NC}"
+# Build and serve frontend
+echo -e "${GREEN}Building and starting frontend on port 3000...${NC}"
 cd frontend
 
 # Check if node_modules exists
@@ -82,7 +82,14 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-npm run dev > ../frontend.log 2>&1 &
+# Build frontend
+if [ ! -d "dist" ] || [ "package.json" -nt "dist" ]; then
+    echo -e "${YELLOW}Building frontend...${NC}"
+    npm run build
+fi
+
+# Serve built frontend (bind to 0.0.0.0 for container access)
+python3 -m http.server 3000 --bind 0.0.0.0 --directory dist > ../frontend.log 2>&1 &
 FRONTEND_PID=$!
 cd ..
 
@@ -97,13 +104,16 @@ if ! kill -0 $FRONTEND_PID 2>/dev/null; then
     exit 1
 fi
 
-echo -e "${GREEN}✓ Frontend dev server started (PID: $FRONTEND_PID)${NC}\n"
+echo -e "${GREEN}✓ Frontend server started (PID: $FRONTEND_PID)${NC}\n"
+
+# Get container hostname or use localhost
+CONTAINER_HOST=${CONTAINER_HOST:-localhost}
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}Servers are running!${NC}"
 echo -e "${BLUE}========================================${NC}"
-echo -e "Backend API:  ${GREEN}http://localhost:8000${NC}"
-echo -e "Frontend UI:  ${GREEN}http://localhost:3000${NC}"
+echo -e "Backend API:  ${GREEN}http://${CONTAINER_HOST}:8000${NC}"
+echo -e "Frontend UI:  ${GREEN}http://${CONTAINER_HOST}:3000${NC}"
 echo -e "\n${YELLOW}Press Ctrl+C to stop both servers${NC}\n"
 echo -e "${BLUE}Logs:${NC}"
 echo -e "  Backend:  backend.log"
