@@ -24,6 +24,11 @@ export const agentAPI = {
     return response.data
   },
 
+  pause: async (stateId) => {
+    const response = await api.post('/agent/pause', { id: stateId })
+    return response.data
+  },
+
   provideInput: async (stateId, answer) => {
     const response = await api.post('/agent/provide_input', {
       id: stateId,
