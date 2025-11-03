@@ -26,6 +26,7 @@ class StateModel(Base):
 # SQLite database (file-based, perfect for development)
 # Database file is stored in backend/data/ directory
 db_path = Path(__file__).resolve().parent.parent / "data" / "agent_states.db"
+db_path.parent.mkdir(parents=True, exist_ok=True)  # Create directory if it doesn't exist
 engine = create_engine(f"sqlite:///{db_path}", echo=False)
 Base.metadata.create_all(engine)
 SessionLocal = sessionmaker(bind=engine)
