@@ -9,7 +9,7 @@ import './App.css'
 
 const TERMINAL_STATUSES = ['complete', 'failed', 'max_steps_reached']
 const NON_RESUMABLE_STATUSES = ['complete', 'failed'] // Statuses that cannot be resumed
-const POLL_INTERVAL = 2000 // 2 seconds
+const POLL_INTERVAL = 0.5 // 0.5 seconds
 
 function App() {
   const [agents, setAgents] = useState([])
