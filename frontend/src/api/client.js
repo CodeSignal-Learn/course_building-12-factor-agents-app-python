@@ -1,9 +1,8 @@
 import axios from 'axios'
 
-const API_BASE_URL = 'http://localhost:8000'
-
+// Use same-origin requests (empty baseURL) since API and UI are served from the same server
 const api = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: '',
   headers: {
     'Content-Type': 'application/json',
   },
