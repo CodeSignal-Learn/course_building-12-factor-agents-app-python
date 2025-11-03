@@ -67,10 +67,10 @@ Start the FastAPI server from the `src` directory:
 
 ```bash
 cd src
-python -m uvicorn server.main:app --host 0.0.0.0 --port 3000 --reload
+python -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The API will be available at `http://localhost:3000`.
+The API will be available at `http://localhost:8000`.
 
 **Note:** The server automatically creates a SQLite database file (`agent_states.db`) in the `src` directory to persist agent states. This enables state recovery, inspection, and resuming interrupted workflows.
 
@@ -118,6 +118,39 @@ When an agent needs clarification or additional information, it can call the bui
 
 The example client handles this automatically, but you can integrate the same pattern into any client application.
 
+## Running the Web UI
+
+A modern React-based web interface is available for managing and monitoring agents:
+
+1. **Install frontend dependencies** (first time only):
+
+```bash
+cd frontend
+npm install
+```
+
+2. **Start the development server**:
+
+```bash
+npm run dev
+```
+
+The UI will be available at `http://localhost:3000`.
+
+**Note:** Make sure the backend server is running on `http://localhost:8000` before using the UI.
+
+### UI Features
+
+- **Launch Agents**: Submit natural language tasks through an intuitive form
+- **Real-Time Monitoring**: Watch agent execution progress with automatic updates
+- **Execution History**: View all past agent executions in a sidebar
+- **Detailed Execution View**: See step-by-step context, tool calls, and outputs
+- **Human-in-the-Loop**: Interactive dialog appears automatically when agents need input
+- **Status Indicators**: Visual badges for running, complete, failed, and waiting states
+- **Resume Workflows**: One-click resume for paused or interrupted agents
+
+The UI communicates with the FastAPI backend through REST API calls and polls for updates automatically.
+
 ## Project Structure
 
 ```
@@ -138,6 +171,20 @@ src/
 ├── client/                 # Example client
 │   └── main.py             # HTTP client with polling demonstration
 └── test.py                 # Local test script for direct agent execution
+frontend/                    # React web UI
+├── src/
+│   ├── components/         # React components
+│   │   ├── TaskForm.jsx    # Task submission form
+│   │   ├── AgentStatus.jsx # Status display component
+│   │   ├── ExecutionView.jsx # Execution context viewer
+│   │   ├── HumanInputDialog.jsx # Human input modal
+│   │   └── AgentHistory.jsx # Agent history sidebar
+│   ├── api/                # API client
+│   │   └── client.js       # HTTP client for backend communication
+│   ├── App.jsx             # Main application component
+│   └── main.jsx            # Application entry point
+├── package.json            # Frontend dependencies
+└── vite.config.js          # Vite configuration
 ```
 
 ## Key Features
