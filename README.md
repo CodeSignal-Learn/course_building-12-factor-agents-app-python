@@ -75,30 +75,42 @@ export OPENAI_API_KEY="your-api-key-here"
 
 ## Quick Start
 
-You can start both the backend and frontend servers with a single command:
+You can build the frontend and start the combined server (API + UI) with a single command:
 
 ```bash
 ./start.sh
 ```
 
-This will start:
-- Backend API server on `http://localhost:8000`
-- Frontend UI on `http://localhost:3000`
+This will:
+- Build the React frontend
+- Start the FastAPI server on `http://localhost:3000`
+- Serve both the API (`/agent/*`) and UI from the same origin
 
-Press `Ctrl+C` to stop both servers.
+Press `Ctrl+C` to stop the server.
 
 ## Running the Server
 
-Start the FastAPI server from the `backend` directory:
+The application runs as a single combined server. Build the frontend first, then start FastAPI:
 
 ```bash
+# Build frontend
+cd frontend
+npm install
+npm run build
+cd ..
+
+# Start server (serves both API and UI)
 cd backend
-python -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload
+python -m uvicorn server.main:app --host 0.0.0.0 --port 3000
 ```
 
-The API will be available at `http://localhost:8000`.
+The application will be available at `http://localhost:3000`.
 
-**Note:** The server automatically creates a SQLite database file (`agent_states.db`) in the `backend/data/` directory to persist agent states. This enables state recovery, inspection, and resuming interrupted workflows.
+**Note:** For development with hot-reload, you can still run them separately:
+- Backend: `cd backend && python -m uvicorn server.main:app --host 0.0.0.0 --port 8000 --reload`
+- Frontend: `cd frontend && npm run dev` (but the frontend will need to be configured to point to `http://localhost:8000`)
+
+The server automatically creates a SQLite database file (`agent_states.db`) in the `backend/data/` directory to persist agent states. This enables state recovery, inspection, and resuming interrupted workflows.
 
 ### API Endpoints
 

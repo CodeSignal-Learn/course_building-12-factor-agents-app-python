@@ -9,10 +9,10 @@ NC='\033[0m' # No Color
 
 # Function to cleanup on exit
 cleanup() {
-    echo -e "\n${YELLOW}Shutting down servers...${NC}"
-    kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
-    wait $BACKEND_PID $FRONTEND_PID 2>/dev/null
-    echo -e "${GREEN}Servers stopped.${NC}"
+    echo -e "\n${YELLOW}Shutting down server...${NC}"
+    kill $SERVER_PID 2>/dev/null
+    wait $SERVER_PID 2>/dev/null
+    echo -e "${GREEN}Server stopped.${NC}"
     exit 0
 }
 
@@ -50,30 +50,11 @@ if ! command -v npm &> /dev/null; then
 fi
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}  12-Factor Agents - Starting Servers${NC}"
+echo -e "${BLUE}  12-Factor Agents - Starting Server${NC}"
 echo -e "${BLUE}========================================${NC}\n"
 
-# Start backend server
-echo -e "${GREEN}Starting backend server on port 8000...${NC}"
-cd backend
-python3 -m uvicorn server.main:app --host 0.0.0.0 --port 8000 > ../backend.log 2>&1 &
-BACKEND_PID=$!
-cd ..
-
-# Wait a moment for backend to start
-sleep 2
-
-# Check if backend started successfully
-if ! kill -0 $BACKEND_PID 2>/dev/null; then
-    echo -e "${RED}Error: Backend server failed to start${NC}"
-    echo -e "${YELLOW}Check backend.log for details${NC}"
-    exit 1
-fi
-
-echo -e "${GREEN}✓ Backend server started (PID: $BACKEND_PID)${NC}\n"
-
-# Build and serve frontend
-echo -e "${GREEN}Building and starting frontend on port 3000...${NC}"
+# Build frontend first
+echo -e "${GREEN}Building frontend...${NC}"
 cd frontend
 
 # Check if node_modules exists
@@ -82,43 +63,44 @@ if [ ! -d "node_modules" ]; then
     npm install
 fi
 
-# Build frontend
+# Build frontend (production bundle)
 if [ ! -d "dist" ] || [ "package.json" -nt "dist" ]; then
-    echo -e "${YELLOW}Building frontend...${NC}"
+    echo -e "${YELLOW}Building frontend assets...${NC}"
     npm run build
+else
+    echo -e "${YELLOW}Frontend build is up to date (dist/).${NC}"
 fi
 
-# Serve built frontend (bind to 0.0.0.0 for container access)
-python3 -m http.server 3000 --bind 0.0.0.0 --directory dist > ../frontend.log 2>&1 &
-FRONTEND_PID=$!
 cd ..
 
-# Wait a moment for frontend to start
+# Start combined server (API + UI)
+echo -e "${GREEN}Starting server on port 3000...${NC}"
+cd backend
+python3 -m uvicorn server.main:app --host 0.0.0.0 --port 3000 > ../server.log 2>&1 &
+SERVER_PID=$!
+cd ..
+
+# Wait a moment for server to start
 sleep 2
 
-# Check if frontend started successfully
-if ! kill -0 $FRONTEND_PID 2>/dev/null; then
-    echo -e "${RED}Error: Frontend server failed to start${NC}"
-    echo -e "${YELLOW}Check frontend.log for details${NC}"
-    kill $BACKEND_PID 2>/dev/null
+# Check if server started successfully
+if ! kill -0 $SERVER_PID 2>/dev/null; then
+    echo -e "${RED}Error: Server failed to start${NC}"
+    echo -e "${YELLOW}Check server.log for details${NC}"
     exit 1
 fi
 
-echo -e "${GREEN}✓ Frontend server started (PID: $FRONTEND_PID)${NC}\n"
-
-# Get container hostname or use localhost
-CONTAINER_HOST=${CONTAINER_HOST:-localhost}
+echo -e "${GREEN}✓ Server started (PID: $SERVER_PID)${NC}\n"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${GREEN}Servers are running!${NC}"
+echo -e "${GREEN}Server is running!${NC}"
 echo -e "${BLUE}========================================${NC}"
-echo -e "Backend API:  ${GREEN}http://${CONTAINER_HOST}:8000${NC}"
-echo -e "Frontend UI:  ${GREEN}http://${CONTAINER_HOST}:3000${NC}"
-echo -e "\n${YELLOW}Press Ctrl+C to stop both servers${NC}\n"
+echo -e "Application: ${GREEN}http://localhost:3000${NC}"
+echo -e "API endpoints: ${GREEN}http://localhost:3000/agent/*${NC}"
+echo -e "\n${YELLOW}Press Ctrl+C to stop the server${NC}\n"
 echo -e "${BLUE}Logs:${NC}"
-echo -e "  Backend:  backend.log"
-echo -e "  Frontend: frontend.log\n"
+echo -e "  Server: server.log\n"
 
-# Wait for both processes
-wait $BACKEND_PID $FRONTEND_PID
+# Wait for server process
+wait $SERVER_PID
 

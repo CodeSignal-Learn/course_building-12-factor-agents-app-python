@@ -1,8 +1,11 @@
 import json
 import logging
 import uuid
+from pathlib import Path
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from typing import Optional
 
@@ -53,6 +56,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve static frontend files (built React app)
+FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+logger = logging.getLogger(__name__)
+logger.info(f"Serving frontend from {FRONTEND_DIST}")
+
+# Serve static assets (JS, CSS, etc.)
+assets_dir = FRONTEND_DIST / "assets"
+if assets_dir.exists():
+    app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+# Serve index.html for root and SPA routes
+@app.get("/", response_class=HTMLResponse)
+async def serve_root():
+    return FileResponse(FRONTEND_DIST / "index.html")
 
 
 class LaunchRequest(BaseModel):
