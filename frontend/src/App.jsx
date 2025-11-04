@@ -141,6 +141,20 @@ function App() {
     }
   }
 
+  // Pause agent
+  const handlePause = async () => {
+    if (!selectedAgent) return
+    
+    try {
+      const state = await agentAPI.pause(selectedAgent.id)
+      updateAgentState(state)
+      // Don't stop polling - keep UI updated
+    } catch (error) {
+      console.error('Error pausing agent:', error)
+      alert('Failed to pause agent: ' + (error.response?.data?.detail || error.message))
+    }
+  }
+
   // Provide human input
   const handleProvideInput = async (answer) => {
     if (!humanInputQuestion) return
@@ -187,13 +201,20 @@ function App() {
             <div className="agent-details">
               <div className="details-header">
                 <h2>Agent Details</h2>
-                {selectedAgent.status !== 'running' &&
-                  selectedAgent.status !== 'waiting_human_input' &&
-                  !NON_RESUMABLE_STATUSES.includes(selectedAgent.status) && (
-                    <button onClick={handleResume} className="resume-button">
-                      Resume
+                <div className="action-buttons">
+                  {selectedAgent.status === 'running' && (
+                    <button onClick={handlePause} className="pause-button">
+                      Pause
                     </button>
                   )}
+                  {selectedAgent.status !== 'running' &&
+                    selectedAgent.status !== 'waiting_human_input' &&
+                    !NON_RESUMABLE_STATUSES.includes(selectedAgent.status) && (
+                      <button onClick={handleResume} className="resume-button">
+                        Resume
+                      </button>
+                    )}
+                </div>
               </div>
 
               <AgentStatus

@@ -2,6 +2,7 @@ import React from 'react'
 
 const statusColors = {
   running: '#3b82f6',
+  paused: '#f59e0b',
   complete: '#10b981',
   failed: '#ef4444',
   waiting_human_input: '#f59e0b',
@@ -10,6 +11,7 @@ const statusColors = {
 
 const statusLabels = {
   running: 'Running',
+  paused: 'Paused',
   complete: 'Complete',
   failed: 'Failed',
   waiting_human_input: 'Waiting for Input',
