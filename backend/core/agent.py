@@ -52,6 +52,7 @@ class Agent:
             instructions=self.system_prompt,
             input=context,
             tools=self.tool_schemas,
+            tool_choice="required",
             reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
         )
         return response
