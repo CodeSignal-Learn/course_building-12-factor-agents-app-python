@@ -36,3 +36,6 @@ backend/data/
 *.log
 backend.log
 frontend.log
+
+# Blueprint
+blueprint.md
