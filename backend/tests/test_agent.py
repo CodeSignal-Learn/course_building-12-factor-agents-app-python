@@ -4,32 +4,15 @@ import uuid
 from pathlib import Path
 
 from core.agent import Agent
-from core.client_tool import ClientTool
 from core.models.state import State
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root,
-)
-from core.tools.human_interaction import ask_human_cli
+from core.tools.functions.human_interaction import ask_human_cli
 
 # Ensure working directory is the backend/ folder so relative prompt paths resolve
 os.chdir(Path(__file__).resolve().parent.parent)
 
 
 def build_agent() -> Agent:
-    tools = [
-        ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-        ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-        ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-        ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-        ClientTool(name="power", description="Raise a number to a power", function=power),
-        ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-    ]
-    return Agent(tools=tools, max_steps=5)
+    return Agent(max_steps=5)
 
 
 def build_initial_state(prompt: str) -> State:
