@@ -89,20 +89,22 @@ The agent implements a stateless reducer pattern centered around the `State` mod
 
 The `Agent` class (backend/core/agent.py) implements the core execution loop:
 
-1. **Initialization**: Takes tools, max_steps (default: 10), model settings
+1. **Initialization**: Takes max_steps (default: 10), model settings. Tool schemas are loaded from JSON files in `core/tools/schemas/`.
 2. **Execution Loop** (`run()` method):
    - Process pending_tool_calls from state
    - Built-in tools (`final_answer`, `ask_human`) change status and stop execution
    - Regular tools execute and add results to context
-   - After processing pending calls, LLM is invoked with updated context
+   - After processing pending calls, context is serialized to text using a template and LLM is invoked
    - LLM response adds new tool calls to pending_tool_calls
    - Progress callback fires after each step to persist state
    - Loop continues until status changes or max_steps reached
 
-3. **Tool Calling**: Tools are defined via `ClientTool` (backend/core/client_tool.py):
-   - Wraps Python functions with automatic schema generation
-   - Introspects function signatures to create OpenAI tool schemas
-   - Supports optional `require_approval` flag for dangerous operations
+3. **Tool Execution**: Tools are executed using a match/case statement in `_next_step`:
+   - Each tool is a case in the match statement (backend/core/agent.py)
+   - Tool functions are defined in `core/tools/functions/`
+   - Tool schemas are JSON files in `core/tools/schemas/`
+   - Built-in tools (`final_answer`, `ask_human`) have special control flow
+   - Regular tools execute, return results, and continue the loop
 
 4. **Built-in Tools**:
    - `final_answer`: Sets status to "complete" and stores result
@@ -148,14 +150,37 @@ React SPA (frontend/src/):
 ### System Prompt
 
 Located at `backend/core/prompts/base_system.md`. The agent is instructed to:
-- ONLY call tools (no text output)
 - Use `final_answer` when done
 - Use `ask_human` for clarification
 - Always prefer tool calls over fabricating results
 
+Tool-only behavior is enforced via `tool_choice="required"` in the OpenAI API call (backend/core/agent.py), not through prompt instructions.
+
+### Context Serialization
+
+The agent serializes the structured context into formatted text before sending it to the LLM:
+
+- **Serialization Function**: `serialize_context_to_text()` in `backend/core/utils/context_serializer.py`
+- **Template System**: Uses a markdown template from `backend/core/prompts/context_format.md`
+- **Format**:
+  ```markdown
+  # User Request
+  <initial user message>
+
+  # Actions Already Completed (DO NOT REPEAT)
+
+  ✓ COMPLETED: tool_name(arg=val) → Result: {"result": ...}
+  ✓ COMPLETED: another_tool(arg=val) → Result: {"result": ...}
+
+  # Next Step
+  Decide what tool to call next to make progress on the request.
+  ```
+
+This approach provides full control over how the model sees context history and makes it explicit that completed actions should not be repeated.
+
 ### File-Relative Prompt Loading
 
-The agent loads prompts using `Path(__file__).resolve().parent` to ensure paths work from any working directory (backend/core/agent.py:20).
+The agent loads prompts using `Path(__file__).resolve().parent` to ensure paths work from any working directory (backend/core/agent.py:26 and backend/core/utils/context_serializer.py:7).
 
 ### Resumption Logic
 
@@ -168,28 +193,65 @@ max_steps_allowed = (self.max_steps + state.steps) if is_resuming else self.max_
 
 1. Agent calls `ask_human` tool → status becomes "waiting_human_input"
 2. Client detects status during polling
-3. Client prompts user (CLI uses `core/tools/human_interaction.py`, UI shows dialog)
+3. Client prompts user (CLI uses `core/tools/functions/human_interaction.py`, UI shows dialog)
 4. Client POSTs answer to `/agent/provide_input`
 5. Server appends `function_call_output` to context with the answer
 6. Agent resumes execution in background task
 
 ### Adding New Tools
 
-1. Define function in `backend/core/tools/` (see `math.py` for examples)
-2. Create `ClientTool` instance in `backend/server/main.py`
-3. Add to `tools` list passed to Agent constructor
+To add a new tool to the agent, follow these three steps:
 
-Example:
+1. **Define the function** in `backend/core/tools/functions/` (see `math.py` for examples):
 ```python
-from core.client_tool import ClientTool
-
 def my_tool(param: str) -> str:
     """Tool description"""
     return f"Result: {param}"
+```
 
-tools = [
-    ClientTool(name="my_tool", description="My tool description", function=my_tool),
-    # ... other tools
+2. **Create JSON schema** in `backend/core/tools/schemas/my_tool.json`:
+```json
+{
+  "type": "function",
+  "name": "my_tool",
+  "description": "Description of what this tool does",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "param": {
+        "type": "string",
+        "description": "Parameter description"
+      }
+    },
+    "required": ["param"],
+    "additionalProperties": false
+  }
+}
+```
+
+3. **Add case to match statement** in `backend/core/agent.py` `_next_step` method:
+```python
+from core.tools.functions.my_module import my_tool
+
+# In _next_step method, add to the match statement:
+case "my_tool":
+    try:
+        result = my_tool(**call_arguments)
+        output = json.dumps({"result": result})
+    except Exception as e:
+        output = json.dumps({"result": f"Error: {str(e)}"})
+```
+
+4. **Load schema in Agent.__init__** in `backend/core/agent.py`:
+```python
+with open(schemas_dir / "my_tool.json", "r", encoding="utf-8") as f:
+    my_tool_schema = json.load(f)
+
+self.tool_schemas = [
+    *math_schemas,
+    final_answer_schema,
+    ask_human_schema,
+    my_tool_schema  # Add here
 ]
 ```
 
