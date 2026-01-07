@@ -12,6 +12,7 @@ from core.tools.functions.math import (
     power,
     square_root,
 )
+from core.utils.context_serializer import serialize_context_to_text
 
 class Agent:
     def __init__(
@@ -47,10 +48,13 @@ class Agent:
         ]
 
     def _call_llm(self, context: List[Any]):
+        # Serialize the entire context history into a single user message
+        serialized_content = serialize_context_to_text(context)
+
         response = openai.responses.create(
             model=self.model,
             instructions=self.system_prompt,
-            input=context,
+            input=serialized_content,
             tools=self.tool_schemas,
             tool_choice="required",
             reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
