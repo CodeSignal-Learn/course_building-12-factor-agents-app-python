@@ -431,130 +431,521 @@ if final_answer:
 # Developing a Stateless Agent in Python
 
 ## Overview
-Turn scripts into reusable components by embracing stateless design. With Factors 2, 5, 6, 7, 10, and 12, you’ll externalize and version prompts, unify execution and business state, implement launch/pause/resume checkpoints, and make human escalation a first‑class tool. Compose small, single‑purpose agents and wrap logic as a stateless reducer that is easy to test and scale.
+Turn scripts into reusable components by embracing stateless design. With Factors 2, 5, 10, and 12, you’ll externalize prompts, unify execution and business state, and build a reducer-style agent that takes state in and returns state out.
 
 
 ## Outline
 ### Unit 1 - Designing a Stateless Reducer Agent
 #### Goal
-Build a stateless reducer agent class with methods for LLM calls, tool execution, and step management (context in, context out), implementing Factor 12 (Make your agent a stateless reducer) by treating the agent as a pure function and Factor 10 (Small, Focused Agents) by creating a minimal, single-responsibility component ready to be composed into larger systems.
+Build an Agent that processes context lists, executes tools via `match/case`, and returns updated context. This implements Factor 12 (stateless reducer) and Factor 10 (small, focused agent). We keep prompts inline for now and introduce prompt files in Unit 2.
 
 `src/core/agent.py`
 ```python
 import json
 import openai
-from typing import List, Any, Optional
+from pathlib import Path
+from typing import List, Any
+
+from core.tools.functions.math import (
+    sum_numbers,
+    multiply_numbers,
+    subtract_numbers,
+    divide_numbers,
+    power,
+    square_root
+)
+class Agent:
+    def __init__(
+        self,
+        model: str = "gpt-5",
+        reasoning_effort: str = "low",
+        extra_instructions: str = "",
+        max_steps: int = 10
+    ):
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.max_steps = max_steps
+        # Keep prompt inline in Unit 1; Unit 2 externalizes it.
+        self.system_prompt = (
+            "You are a helpful assistant. "
+            "When your work is done, call the final_answer tool. "
+            "Prefer using tools to compute or transform results."
+        ) + extra_instructions
+
+        # Load tool schemas from JSON files.
+        schemas_dir = Path(__file__).resolve().parent / "tools" / "schemas"
+        with open(schemas_dir / "math.json", "r", encoding="utf-8") as f:
+            math_schemas = json.load(f)
+        with open(schemas_dir / "final_answer.json", "r", encoding="utf-8") as f:
+            final_answer_schema = json.load(f)
+
+        self.tool_schemas = [
+            *math_schemas,
+            final_answer_schema
+        ]
+
+    def _call_llm(self, context: List[Any]):
+        # Pass full context directly in Unit 1.
+        response = openai.responses.create(
+            model=self.model,
+            instructions=self.system_prompt,
+            input=context,
+            tools=self.tool_schemas,
+            tool_choice="required",
+            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
+        )
+        return response
+
+    def _next_step(self, context: List[Any]):
+        # One step: ask the model for tool calls, then execute them.
+        response = self._call_llm(context)
+        function_calls = [item for item in response.output if item.type == "function_call"]
+
+        for fc in function_calls:
+            call_name = fc.name
+            call_arguments = json.loads(fc.arguments)
+
+            context.append({
+                "type": "function_call",
+                "name": call_name,
+                "arguments": fc.arguments,
+                "call_id": fc.call_id
+            })
+
+            if call_name == "final_answer":
+                # Stop when the model signals completion.
+                return context, "complete", call_arguments.get("answer")
+
+            # Execute the requested tool and capture its output.
+            match call_name:
+                case "sum_numbers":
+                    try:
+                        result = sum_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "multiply_numbers":
+                    try:
+                        result = multiply_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "subtract_numbers":
+                    try:
+                        result = subtract_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "divide_numbers":
+                    try:
+                        result = divide_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "power":
+                    try:
+                        result = power(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "square_root":
+                    try:
+                        result = square_root(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case _:
+                    output = json.dumps({"result": f"Error: Tool {call_name} not found"})
+
+            context.append({
+                "type": "function_call_output",
+                "call_id": fc.call_id,
+                "output": output
+            })
+
+        # No completion yet; keep running.
+        return context, "running", None
+
+    def run(self, context: List[Any]):
+        # Reducer loop: context in, context out.
+        # Main entry point: run the agent until done or max steps
+        # This is the "reducer" pattern: context in, context out
+        step = 0
+        status = "running"
+        final_answer = None
+
+        # Loop until complete or max steps reached
+        while status == "running" and step < self.max_steps:
+            step += 1
+            # Each step processes function calls and updates context
+            context, status, final_answer = self._next_step(context)
+        # Handle max steps case
+        if status == "running":
+            status = "max_steps_reached"
+
+        # Return the final state
+        return context, status, final_answer
+```
+
+`src/main.py`
+```python
+from core.agent import Agent
+
+agent = Agent(max_steps=10)
+
+context = [
+    {
+        "role": "user",
+        "content": "What is 15 + 27? Then multiply the result by 3."
+    }
+]
+
+context, status, final_answer = agent.run(context)
+
+print(f"Status: {status}")
+print(f"Final answer: {final_answer}")
+```
+`src/core/tools/schemas/math.json`
+```json
+[
+  {
+    "type": "function",
+    "name": "sum_numbers",
+    "description": "Sum two numbers",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "a": { "type": "number", "description": "The first number" },
+        "b": { "type": "number", "description": "The second number" }
+      },
+      "required": ["a", "b"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "multiply_numbers",
+    "description": "Multiply two numbers",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "a": { "type": "number", "description": "The first number" },
+        "b": { "type": "number", "description": "The second number" }
+      },
+      "required": ["a", "b"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "subtract_numbers",
+    "description": "Subtract two numbers",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "a": { "type": "number", "description": "The first number" },
+        "b": { "type": "number", "description": "The second number" }
+      },
+      "required": ["a", "b"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "divide_numbers",
+    "description": "Divide two numbers",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "a": { "type": "number", "description": "The numerator" },
+        "b": { "type": "number", "description": "The denominator" }
+      },
+      "required": ["a", "b"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "power",
+    "description": "Raise a number to a power",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "base": { "type": "number", "description": "The base number" },
+        "exponent": { "type": "number", "description": "The exponent" }
+      },
+      "required": ["base", "exponent"],
+      "additionalProperties": false
+    }
+  },
+  {
+    "type": "function",
+    "name": "square_root",
+    "description": "Take the square root of a number",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "x": { "type": "number", "description": "The number to take the square root of" }
+      },
+      "required": ["x"],
+      "additionalProperties": false
+    }
+  }
+]
+```
+`src/core/tools/schemas/final_answer.json`
+```json
+{
+  "type": "function",
+  "name": "final_answer",
+  "description": "Provide the final answer and stop.",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "answer": { "type": "string", "description": "The final answer for the user." }
+    },
+    "required": ["answer"],
+    "additionalProperties": false
+  }
+}
+```
+`src/core/tools/functions/math.py`
+```python
+def sum_numbers(a: float, b: float) -> float:
+    return a + b
+
+
+def multiply_numbers(a: float, b: float) -> float:
+    return a * b
+
+
+def subtract_numbers(a: float, b: float) -> float:
+    return a - b
+
+
+def divide_numbers(a: float, b: float) -> float:
+    if b == 0:
+        raise ValueError("Division by zero")
+    return a / b
+
+
+def power(base: float, exponent: float) -> float:
+    return base ** exponent
+
+
+def square_root(x: float) -> float:
+    if x < 0:
+        raise ValueError("Square root of negative number")
+    return x ** 0.5
+```
+### Unit 2 - Taking Ownership of our Prompts
+#### Goal
+Extract system prompts and context formats to versioned markdown files, and use a serializer to control what the model sees (Factors 2 and 3).
+
+`src/core/prompts/base_system.md`
+```markdown
+# ROLE
+You are an autonomous agent that can take multiple tool-calling steps.
+
+# REQUIREMENTS
+- If your work is done, call the final_answer tool
+- ALWAYS prefer calling tools to compute, fetch, or transform information rather than fabricating results.
+
+# EXTRA INSTRUCTIONS
+
+```
+
+`src/core/prompts/context_format.md`
+```markdown
+# User Request
+{user_message}
+
+# Actions Already Completed (DO NOT REPEAT)
+
+{execution_history}
+
+# Next Step
+Decide what tool to call next to make progress on the request.
+```
+
+`src/core/utils/context_serializer.py`
+```python
+import json
+from typing import List, Dict, Any
+from pathlib import Path
+
+
+_template_path = Path(__file__).resolve().parent.parent / "prompts" / "context_format.md"
+_CONTEXT_TEMPLATE = _template_path.read_text(encoding="utf-8")
+
+
+def serialize_context_to_text(context: List[Dict[str, Any]]) -> str:
+    if not context:
+        return ""
+
+    user_message = ""
+    for item in context:
+        if item.get("role") == "user":
+            user_message = item.get("content", "")
+            break
+
+    call_map = {}
+    for item in context:
+        if item.get("type") == "function_call":
+            call_id = item.get("call_id")
+            call_name = item.get("name")
+            call_args = item.get("arguments", "{}")
+
+            if isinstance(call_args, str):
+                try:
+                    call_args = json.loads(call_args)
+                except:
+                    pass
+
+            if isinstance(call_args, dict):
+                args_str = ", ".join(f"{k}={repr(v)}" for k, v in call_args.items())
+            else:
+                args_str = str(call_args)
+
+            call_map[call_id] = f"{call_name}({args_str})"
+
+    lines = []
+    for item in context:
+        if item.get("type") == "function_call_output":
+            call_id = item.get("call_id")
+            output = item.get("output", "{}")
+            call_formatted = call_map.get(call_id, f"unknown_call({call_id})")
+            lines.append(f"✓ COMPLETED: {call_formatted} → Result: {output}")
+
+    execution_history = "\n".join(lines) if lines else "(No actions completed yet)"
+
+    return _CONTEXT_TEMPLATE.format(
+        user_message=user_message,
+        execution_history=execution_history
+    )
+```
+`src/core/agent.py`
+```python
+import json
+import openai
+from pathlib import Path
+from typing import List, Any
+
+from core.tools.functions.math import (
+    sum_numbers,
+    multiply_numbers,
+    subtract_numbers,
+    divide_numbers,
+    power,
+    square_root
+)
+from core.utils.context_serializer import serialize_context_to_text
+
 
 class Agent:
     def __init__(
         self,
         model: str = "gpt-5",
         reasoning_effort: str = "low",
-        max_steps: int = 10,
-        tools: Optional[List[ClientTool]] = None
+        extra_instructions: str = "",
+        max_steps: int = 10
     ):
-        # Store configuration
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.max_steps = max_steps
-        
-        # Prepare tools: create a lookup dictionary by name for fast access
-        tools = tools or []
-        self.tools = {tool.name: tool for tool in tools}
-        
-        # Extract schemas from tools for the LLM
-        # The LLM needs schemas, not the actual tool objects
-        self.tool_schemas = [tool.schema for tool in tools]
-        
-        # Add built-in final_answer tool
-        # This is a special tool that signals the agent is done
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "final_answer",
-            "description": "Provide the final answer and stop.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {"type": "string", "description": "The final answer for the user."}
-                },
-                "required": ["answer"],
-                "additionalProperties": False
-            }
-        })
+        # Load system prompt from file (Factor 2).
+        prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
+        self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
+
+        schemas_dir = Path(__file__).resolve().parent / "tools" / "schemas"
+        with open(schemas_dir / "math.json", "r", encoding="utf-8") as f:
+            math_schemas = json.load(f)
+        with open(schemas_dir / "final_answer.json", "r", encoding="utf-8") as f:
+            final_answer_schema = json.load(f)
+
+        self.tool_schemas = [
+            *math_schemas,
+            final_answer_schema
+        ]
 
     def _call_llm(self, context: List[Any]):
-        # Encapsulate the LLM API call
-        # Takes context (list of messages/function calls) and returns response
+        # Serialize context to control what the model sees (Factor 3).
+        serialized_content = serialize_context_to_text(context)
+
         response = openai.responses.create(
             model=self.model,
-            instructions="You are a helpful assistant. Always use tools. When done, call final_answer.",
-            input=context,  # The conversation history
-            tools=self.tool_schemas,  # Available tools for the model
+            instructions=self.system_prompt,
+            input=serialized_content,
+            tools=self.tool_schemas,
+            tool_choice="required",
             reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
         )
         return response
 
-    def _call_tool(self, function_call: dict):
-        # Execute a tool call and return the result in the expected format
-        tool_name = function_call["name"]
-        call_id = function_call["call_id"]
-        tool_input = function_call["arguments"]  # Already a dict
-        
-        try:
-            # Look up the tool and execute it
-            result = self.tools[tool_name].execute(**tool_input)
-        except KeyError:
-            # Tool not found in our registry
-            result = f"Error: Tool {tool_name} not found"
-        except Exception as e:
-            # Tool execution failed
-            result = f"Error: {str(e)}"
-        
-        # Return result in the format expected by the Responses API
-        return {
-            "type": "function_call_output",
-            "call_id": call_id,  # Match with the original call
-            "output": json.dumps({"result": result})  # Must be JSON string
-        }
-
     def _next_step(self, context: List[Any]):
-        # Execute one step of the agent loop:
-        # 1. Call LLM with current context
-        # 2. Process function calls
-        # 3. Execute tools and add results
-        # Returns updated context, status, and final_answer
-        
         response = self._call_llm(context)
-        
-        # Extract all function calls from the response
         function_calls = [item for item in response.output if item.type == "function_call"]
-        
-        # Process each function call
+
         for fc in function_calls:
-            function_name = fc.name
-            args = json.loads(fc.arguments)  # Parse JSON string to dict
-            
-            # Add function call to context (transparency)
+            call_name = fc.name
+            call_arguments = json.loads(fc.arguments)
+
             context.append({
                 "type": "function_call",
-                "name": function_name,
-                "arguments": fc.arguments,  # Keep as JSON string
+                "name": call_name,
+                "arguments": fc.arguments,
                 "call_id": fc.call_id
             })
-            
-            # Check for completion signal
-            if function_name == "final_answer":
-                return context, "complete", args.get("answer")
-            
-            # Execute the tool and add result to context
-            result = self._call_tool({
-                "name": function_name,
-                "arguments": args,
-                "call_id": fc.call_id
+
+            if call_name == "final_answer":
+                return context, "complete", call_arguments.get("answer")
+
+            match call_name:
+                case "sum_numbers":
+                    try:
+                        result = sum_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "multiply_numbers":
+                    try:
+                        result = multiply_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "subtract_numbers":
+                    try:
+                        result = subtract_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "divide_numbers":
+                    try:
+                        result = divide_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "power":
+                    try:
+                        result = power(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "square_root":
+                    try:
+                        result = square_root(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case _:
+                    output = json.dumps({"result": f"Error: Tool {call_name} not found"})
+
+            context.append({
+                "type": "function_call_output",
+                "call_id": fc.call_id,
+                "output": output
             })
-            context.append(result)
-        
-        # No final_answer yet, continue running
+
         return context, "running", None
 
     def run(self, context: List[Any]):
@@ -563,51 +954,25 @@ class Agent:
         step = 0
         status = "running"
         final_answer = None
-        
+
         # Loop until complete or max steps reached
         while status == "running" and step < self.max_steps:
             step += 1
             # Each step processes function calls and updates context
             context, status, final_answer = self._next_step(context)
-            if final_answer:
-                break  # Early exit if we got the answer
-        
         # Handle max steps case
         if status == "running":
             status = "max_steps_reached"
-        
+
         # Return the final state
         return context, status, final_answer
 ```
-
 `src/main.py`
 ```python
 from core.agent import Agent
-from core.client_tool import ClientTool
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root
-)
 
-# Create ClientTool instances from math functions
-# ClientTool automatically generates schemas from function signatures
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
+agent = Agent(max_steps=10)
 
-# Create agent with tools
-agent = Agent(tools=tools, max_steps=10)
-
-# Initialize context with user's request
 context = [
     {
         "role": "user",
@@ -615,316 +980,42 @@ context = [
     }
 ]
 
-# Run the agent: context in, context out (stateless reducer pattern)
 context, status, final_answer = agent.run(context)
 
 print(f"Status: {status}")
 print(f"Final answer: {final_answer}")
-```
-### Unit 2 - Taking Ownership of our Prompts
-#### Goal
-Extract system prompts to external markdown files and load them dynamically, implementing Factor 2 (Own your prompts) by version-controlling prompts as first-class code rather than embedding them in framework abstractions.
-
-`src/core/prompts/base_system.md`
-```markdown
-# ROLE
-You are an autonomous agent that can take multiple tool-calling steps.
-
-# REQUIREMENTS
-- Do never output text, always ONLY call tools
-- If your work is done, call the final_answer tool
-- If you need to ask clarification to the user, use the ask_human tool
-- ALWAYS prefer calling tools to compute, fetch, or transform information rather than fabricating results.
-
-# EXTRA INSTRUCTIONS
-
-```
-
-`src/core/agent.py`
-```python
-import json
-import openai
-from typing import List, Any, Optional
-from pathlib import Path
-
-from core.client_tool import ClientTool
-
-class Agent:
-    def __init__(
-        self,
-        model: str = "gpt-5",
-        reasoning_effort: str = "low",
-        extra_instructions: str = "None",
-        max_steps: int = 10,
-        tools: Optional[List[ClientTool]] = None
-    ):
-        self.model = model
-        self.reasoning_effort = reasoning_effort
-        self.max_steps = max_steps
-        # Load system prompt from markdown file (Factor 2: Own your prompts)
-        # Using Path ensures it works regardless of where the script is run from
-        prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
-        self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
-        tools = tools or []
-        self.tools = {tool.name: tool for tool in tools}
-        self.tool_schemas = [tool.schema for tool in tools]
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "final_answer",
-            "description": "Provide the final answer and stop.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {"type": "string", "description": "The final answer for the user."}
-                },
-                "required": ["answer"],
-                "additionalProperties": False
-            }
-        })
-
-    def _call_llm(self, context: List[Any]):
-        response = openai.responses.create(
-            model=self.model,
-            instructions=self.system_prompt,
-            input=context,
-            tools=self.tool_schemas,
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
-        )
-        return response
-
-    def _call_tool(self, function_call: dict):
-        tool_name = function_call["name"]
-        call_id = function_call["call_id"]
-        tool_input = function_call["arguments"]
-        
-        try:
-            result = self.tools[tool_name].execute(**tool_input)
-        except KeyError:
-            result = f"Error: Tool {tool_name} not found"
-        except Exception as e:
-            result = f"Error: {str(e)}"
-        
-        return {
-            "type": "function_call_output",
-            "call_id": call_id,
-            "output": json.dumps({"result": result})
-        }
-
-    def _next_step(self, context: List[Any]):
-        response = self._call_llm(context)
-        
-        function_calls = [item for item in response.output if item.type == "function_call"]
-        
-        for fc in function_calls:
-            function_name = fc.name
-            args = json.loads(fc.arguments)
-            
-            context.append({
-                "type": "function_call",
-                "name": function_name,
-                "arguments": fc.arguments,
-                "call_id": fc.call_id
-            })
-            
-            if function_name == "final_answer":
-                return context, "complete", args.get("answer")
-            
-            result = self._call_tool({
-                "name": function_name,
-                "arguments": args,
-                "call_id": fc.call_id
-            })
-            context.append(result)
-        
-        return context, "running", None
-
-    def run(self, context: List[Any]):
-        step = 0
-        status = "running"
-        final_answer = None
-        
-        while status == "running" and step < self.max_steps:
-            step += 1
-            context, status, final_answer = self._next_step(context)
-            if final_answer:
-                break
-        
-        if status == "running":
-            status = "max_steps_reached"
-        
-        return context, status, final_answer
+print("\nFinal context:")
+for item in context:
+    print(item)
 ```
 ### Unit 3 - Unifying Execution and Business States
 #### Goal
-Create a unified State class that combines execution state (steps, status) with business state (context, final_answer) for pause/resume capabilities, implementing Factor 5 (Unify execution state and business state) by treating all agent interactions as part of the core application state.
+Create a unified State class that combines execution state (steps, status) with business state (context, final_answer), implementing Factor 5 (Unify execution state and business state).
 
 `src/core/models/state.py`
 ```python
 from typing import List, Any, Optional
 from pydantic import BaseModel, Field
 
-# State class unifies execution state and business state (Factor 5)
-# This allows us to pause/resume, track progress, and manage errors in one place
-class State(BaseModel):
-    id: str  # Unique identifier for this execution
-    steps: int = 0  # Number of steps executed so far
-    status: str = "running"  # Current status: "running", "complete", "waiting_human_input", "max_steps_reached"
-    context: List[Any] = Field(default_factory=list)  # Conversation history: messages, function calls, results
-    pending_tool_calls: List[Any] = Field(default_factory=list)  # Function calls waiting to be executed
-    error: Optional[str] = None  # Error message if something went wrong
-    final_answer: Optional[str] = None  # The final answer when complete
-```
 
+class State(BaseModel):
+    id: str
+    steps: int = 0
+    status: str = "running"
+    context: List[Any] = Field(default_factory=list)
+    pending_tool_calls: List[Any] = Field(default_factory=list)
+    error: Optional[str] = None
+    final_answer: Optional[str] = None
+```
 `src/core/agent.py`
 ```python
 import json
 import openai
-from typing import List, Any, Optional
 from pathlib import Path
+from typing import List, Any
 
 from core.models.state import State
-
-class Agent:
-    def __init__(
-        self,
-        model: str = "gpt-5",
-        reasoning_effort: str = "low",
-        extra_instructions: str = "None",
-        max_steps: int = 10,
-        tools: Optional[List[ClientTool]] = None
-    ):
-        self.model = model
-        self.reasoning_effort = reasoning_effort
-        self.max_steps = max_steps
-        # Load system prompt from markdown file (Factor 2: Own your prompts)
-        # Using Path ensures it works regardless of where the script is run from
-        prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
-        self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
-        tools = tools or []
-        self.tools = {tool.name: tool for tool in tools}
-        self.tool_schemas = [tool.schema for tool in tools]
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "final_answer",
-            "description": "Provide the final answer and stop.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {"type": "string", "description": "The final answer for the user."}
-                },
-                "required": ["answer"],
-                "additionalProperties": False
-            }
-        })
-
-    def _call_llm(self, context: List[Any]):
-        response = openai.responses.create(
-            model=self.model,
-            instructions=self.system_prompt,
-            input=context,
-            tools=self.tool_schemas,
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
-        )
-        return response
-
-    def _call_tool(self, function_call: dict):
-        tool_name = function_call["name"]
-        call_id = function_call["call_id"]
-        tool_input = function_call["arguments"]
-        
-        try:
-            result = self.tools[tool_name].execute(**tool_input)
-        except KeyError:
-            result = f"Error: Tool {tool_name} not found"
-        except Exception as e:
-            result = f"Error: {str(e)}"
-        
-        return {
-            "type": "function_call_output",
-            "call_id": call_id,
-            "output": json.dumps({"result": result})
-        }
-
-    def _next_step(self, state: State):
-        # Execute one step: process pending tool calls, then call LLM for new ones
-        state.steps += 1
-        
-        # Process all pending tool calls from previous step
-        # Use list() to create a copy so we can safely remove items during iteration
-        for function_call in list(state.pending_tool_calls):
-            call_name = function_call["name"]
-            call_arguments = function_call["arguments"]  # Already a dict
-            call_id = function_call["call_id"]
-            
-            # Add function call to context for transparency
-            state.context.append({
-                "type": "function_call",
-                "name": call_name,
-                "arguments": json.dumps(call_arguments),  # Serialize to JSON string for storage
-                "call_id": call_id
-            })
-            
-            # Handle special control tools
-            if call_name == "final_answer":
-                # Agent is done, clear pending calls and set status
-                state.pending_tool_calls = []
-                state.status = "complete"
-                state.final_answer = call_arguments.get("answer")
-                return state
-            
-            # Execute regular tool and add result to context
-            result = self._call_tool({
-                "name": call_name,
-                "arguments": call_arguments,
-                "call_id": call_id
-            })
-            state.pending_tool_calls.remove(function_call)
-            state.context.append(result)
-        
-        # Call LLM with updated context (includes tool results)
-        response = self._call_llm(state.context)
-        
-        # Extract new function calls from LLM response
-        function_calls = [item for item in response.output if item.type == "function_call"]
-        
-        # Convert SDK objects to plain dicts for storage in state
-        function_call_dicts = [
-            {
-                "name": fc.name,
-                "arguments": json.loads(fc.arguments),  # Parse JSON string to dict
-                "call_id": fc.call_id,
-                "type": fc.type
-            }
-            for fc in function_calls
-        ]
-        
-        # Add new function calls to pending list (will be processed in next step)
-        state.pending_tool_calls.extend(function_call_dicts)
-        return state
-
-    def run(self, state: State):
-        # Main entry point: run agent until complete or max steps
-        # State is mutated in place (unified execution and business state)
-        state.status = "running"
-        
-        # Loop until complete or max steps reached
-        while state.status == "running" and state.steps < self.max_steps:
-            state = self._next_step(state)
-        
-        # Handle max steps case
-        if state.status == "running":
-            state.status = "max_steps_reached"
-        
-        return state
-```
-
-`src/main.py`
-```python
-import uuid
-from core.agent import Agent
-from core.models.state import State
-from core.client_tool import ClientTool
-from core.tools.math import (
+from core.tools.functions.math import (
     sum_numbers,
     multiply_numbers,
     subtract_numbers,
@@ -932,275 +1023,120 @@ from core.tools.math import (
     power,
     square_root
 )
+from core.utils.context_serializer import serialize_context_to_text
 
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
-
-agent = Agent(tools=tools, max_steps=10)
-
-# Create initial state with unique ID
-# State unifies execution state (steps, status) with business state (context, final_answer)
-state = State(
-    id=str(uuid.uuid4()),  # Unique identifier for this execution
-    context=[
-        {
-            "role": "user",
-            "content": "What is 15 + 27? Then multiply the result by 3."
-        }
-    ],
-    status="running"  # Initial status
-)
-
-# Run the agent: state is modified in place
-state = agent.run(state)
-
-print(f"ID: {state.id}")
-print(f"Status: {state.status}")
-print(f"Steps: {state.steps}")
-print(f"Final answer: {state.final_answer}")
-```
-### Unit 4 - Resuming Executions from Previous States
-#### Goal
-Demonstrate resuming agent execution from a saved state, enabling pause/resume functionality after interruptions and implementing Factor 6 (Launch/Pause/Resume with simple APIs) by designing agent logic that can be stopped and safely resumed at well-defined checkpoints.
-
-`src/main.py`
-```python
-import json
-import uuid
-from core.agent import Agent
-from core.models.state import State
-
-def add(a: float, b: float) -> float:
-    return a + b
-
-def multiply(a: float, b: float) -> float:
-    return a * b
-
-tools = [
-    {
-        "name": "add",
-        "description": "Add two numbers together",
-        "function": add,
-        "schema": {
-            "type": "function",
-            "name": "add",
-            "description": "Add two numbers together",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "number", "description": "The first number"},
-                    "b": {"type": "number", "description": "The second number"}
-                },
-                "required": ["a", "b"],
-                "additionalProperties": False
-            }
-        }
-    },
-    {
-        "name": "multiply",
-        "description": "Multiply two numbers together",
-        "function": multiply,
-        "schema": {
-            "type": "function",
-            "name": "multiply",
-            "description": "Multiply two numbers together",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "a": {"type": "number", "description": "The first number"},
-                    "b": {"type": "number", "description": "The second number"}
-                },
-                "required": ["a", "b"],
-                "additionalProperties": False
-            }
-        }
-    }
-]
-
-agent = Agent(tools=tools, max_steps=3)
-
-state = State(
-    id=str(uuid.uuid4()),
-    context=[
-        {
-            "role": "user",
-            "content": "What is 15 + 27? Then multiply the result by 3."
-        }
-    ],
-    status="running"
-)
-
-# Run the agent (may hit max_steps limit)
-state = agent.run(state)
-print(f"After first run - Status: {state.status}, Steps: {state.steps}")
-
-# If we hit max_steps, we can resume with the same state
-# The state contains all the context needed to continue
-if state.status == "max_steps_reached":
-    print("Resuming execution...")
-    # Resume from where we left off - state has all the context
-    state = agent.run(state)
-    print(f"After resume - Status: {state.status}, Steps: {state.steps}")
-
-print(f"Final answer: {state.final_answer}")
-```
-### Unit 5 - Contacting Humans Using Tool Calls
-#### Goal
-Add an ask_human tool that pauses execution and waits for user input before resuming, implementing Factor 7 (Contact humans with tool calls) by making human escalation a first-class action within the agent's workflow.
-
-`src/utils/human_interaction.py`
-```python
-import json
-
-# Helper function to handle human interaction via CLI
-# This implements Factor 7: Contact humans with tool calls
-def ask_human_cli(function_call: dict) -> dict:
-    # Parse the question from the function call arguments
-    arguments = json.loads(function_call['arguments'])
-    try:
-        # Prompt the user and get their response
-        response = input(f"\nAgent is asking: {arguments['question']}\n> ")
-        # Return the response in the format expected by the Responses API
-        return {
-            "type": "function_call_output",
-            "call_id": function_call["call_id"],  # Match with the original call
-            "output": json.dumps({
-                "answer": response  # Wrap answer in JSON
-            })
-        }
-    except EOFError:
-        # Handle non-interactive environments (like automated tests)
-        raise EOFError("Cannot request clarification in non-interactive environment")
-```
-
-`src/core/agent.py`
-```python
-import json
-import openai
-from typing import List, Any, Optional
-from pathlib import Path
-
-from core.models.state import State
 
 class Agent:
     def __init__(
         self,
         model: str = "gpt-5",
         reasoning_effort: str = "low",
-        extra_instructions: str = "None",
-        max_steps: int = 10,
-        tools: Optional[List[ClientTool]] = None
+        extra_instructions: str = "",
+        max_steps: int = 10
     ):
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.max_steps = max_steps
-        # Load system prompt from markdown file (Factor 2: Own your prompts)
-        # Using Path ensures it works regardless of where the script is run from
+
         prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
         self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
-        tools = tools or []
-        self.tools = {tool.name: tool for tool in tools}
-        self.tool_schemas = [tool.schema for tool in tools]
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "final_answer",
-            "description": "Provide the final answer and stop.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {"type": "string", "description": "The final answer for the user."}
-                },
-                "required": ["answer"],
-                "additionalProperties": False
-            }
-        })
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "ask_human",
-            "description": "Ask the user for clarification or additional information.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The question or prompt to ask the user"}
-                },
-                "required": ["question"],
-                "additionalProperties": False
-            }
-        })
+
+        schemas_dir = Path(__file__).resolve().parent / "tools" / "schemas"
+        with open(schemas_dir / "math.json", "r", encoding="utf-8") as f:
+            math_schemas = json.load(f)
+        with open(schemas_dir / "final_answer.json", "r", encoding="utf-8") as f:
+            final_answer_schema = json.load(f)
+
+        self.tool_schemas = [
+            *math_schemas,
+            final_answer_schema
+        ]
 
     def _call_llm(self, context: List[Any]):
+        serialized_content = serialize_context_to_text(context)
         response = openai.responses.create(
             model=self.model,
             instructions=self.system_prompt,
-            input=context,
+            input=serialized_content,
             tools=self.tool_schemas,
+            tool_choice="required",
             reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
         )
         return response
 
-    def _call_tool(self, function_call: dict):
-        tool_name = function_call["name"]
-        call_id = function_call["call_id"]
-        tool_input = function_call["arguments"]
-        
-        try:
-            result = self.tools[tool_name].execute(**tool_input)
-        except KeyError:
-            result = f"Error: Tool {tool_name} not found"
-        except Exception as e:
-            result = f"Error: {str(e)}"
-        
-        return {
-            "type": "function_call_output",
-            "call_id": call_id,
-            "output": json.dumps({"result": result})
-        }
-
     def _next_step(self, state: State):
+        # State carries both execution and business data (Factor 5).
         state.steps += 1
-        
+
         for function_call in list(state.pending_tool_calls):
             call_name = function_call["name"]
             call_arguments = function_call["arguments"]
             call_id = function_call["call_id"]
-            
+
+            # Persist the tool call into unified context history.
             state.context.append({
                 "type": "function_call",
                 "name": call_name,
                 "arguments": json.dumps(call_arguments),
                 "call_id": call_id
             })
-            
-            # Handle ask_human tool (Factor 7: Contact humans with tool calls)
-            if call_name == "ask_human":
-                # Don't execute the tool here - wait for human input
-                state.pending_tool_calls.remove(function_call)
-                state.status = "waiting_human_input"  # Signal that we're waiting
-                return state  # Stop execution until human responds
-            
-            if call_name == "final_answer":
-                state.pending_tool_calls = []
-                state.status = "complete"
-                state.final_answer = call_arguments.get("answer")
-                return state
-            
-            result = self._call_tool({
-                "name": call_name,
-                "arguments": call_arguments,
-                "call_id": call_id
-            })
+
+            match call_name:
+                case "final_answer":
+                    state.pending_tool_calls = []
+                    state.status = "complete"
+                    state.final_answer = call_arguments.get("answer")
+                    return state
+                case "sum_numbers":
+                    try:
+                        result = sum_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "multiply_numbers":
+                    try:
+                        result = multiply_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "subtract_numbers":
+                    try:
+                        result = subtract_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "divide_numbers":
+                    try:
+                        result = divide_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "power":
+                    try:
+                        result = power(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "square_root":
+                    try:
+                        result = square_root(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case _:
+                    output = json.dumps({"result": f"Error: Tool {call_name} not found"})
+
             state.pending_tool_calls.remove(function_call)
-            state.context.append(result)
-        
+            # Store tool output in the same state object.
+            state.context.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output
+            })
+
         response = self._call_llm(state.context)
-        
         function_calls = [item for item in response.output if item.type == "function_call"]
+
         function_call_dicts = [
             {
                 "name": fc.name,
@@ -1210,80 +1146,46 @@ class Agent:
             }
             for fc in function_calls
         ]
-        
+
+        # Queue new tool calls inside the unified state for the next step.
         state.pending_tool_calls.extend(function_call_dicts)
         return state
 
     def run(self, state: State):
+        # Execution status lives on the same state object.
         state.status = "running"
-        
+
         while state.status == "running" and state.steps < self.max_steps:
             state = self._next_step(state)
-        
+
         if state.status == "running":
             state.status = "max_steps_reached"
-        
+
         return state
 ```
-
 `src/main.py`
 ```python
 import uuid
 from core.agent import Agent
 from core.models.state import State
-from core.client_tool import ClientTool
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root
-)
-from utils.human_interaction import ask_human_cli
 
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
-
-agent = Agent(tools=tools, max_steps=10)
+agent = Agent(max_steps=10)
 
 state = State(
     id=str(uuid.uuid4()),
     context=[
         {
             "role": "user",
-            "content": "What is 15 + 27? Ask me for my name first."
+            "content": "What is 15 + 27? Then multiply the result by 3."
         }
     ],
     status="running"
 )
 
-# Run the agent until it needs human input or completes
 state = agent.run(state)
 
-# Handle human interaction loop
-# When agent calls ask_human, status becomes "waiting_human_input"
-while state.status == "waiting_human_input":
-    print(f"\nStatus: {state.status}, Steps: {state.steps}")
-    
-    # Get the last function call (should be ask_human)
-    function_call = state.context[-1]
-    # Ask the user and get their response
-    answer = ask_human_cli(function_call)
-    # Add the human's answer to context
-    state.context.append(answer)
-    
-    # Resume agent execution with the human's input
-    state = agent.run(state)
-
-print(f"\nFinal Status: {state.status}")
-print(f"Final Answer: {state.final_answer}")
+print(f"Status: {state.status}")
+print(f"Final answer: {state.final_answer}")
 ```
 
 ---
