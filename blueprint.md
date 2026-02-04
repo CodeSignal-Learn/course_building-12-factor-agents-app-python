@@ -291,12 +291,6 @@ def multiply(a: float, b: float) -> float:
     """Multiply two numbers together."""
     return a * b
 
-# Map function names to actual function objects for execution
-functions = {
-    "add": add,
-    "multiply": multiply
-}
-
 # Define tool schemas including a special final_answer tool
 tool_schemas = [
     {
@@ -393,35 +387,36 @@ while not done and step < max_steps:
                 "call_id": item.call_id
             })
             
-            # Check if this is the final_answer tool
-            if function_name == "final_answer":
-                final_answer = args.get("answer")
-                done = True
-                print(f"Final answer: {final_answer}")
-                break
-            
-            # Execute regular tools
-            if function_name in functions:
-                try:
-                    result = functions[function_name](**args)
-                    print(f"Result: {result}")
-                    
-                    # Add result to context
-                    context.append({
-                        "type": "function_call_output",
-                        "call_id": item.call_id,
-                        "output": json.dumps({"result": result})
-                    })
-                except Exception as e:
-                    print(f"Error executing {function_name}: {e}")
-                    # Add error to context so the model can handle it
-                    context.append({
-                        "type": "function_call_output",
-                        "call_id": item.call_id,
-                        "output": json.dumps({"error": str(e)})
-                    })
-            else:
-                print(f"Unknown function: {function_name}")
+            # Execute tools with match/case (mirrors core/agent.py pattern)
+            match function_name:
+                case "final_answer":
+                    final_answer = args.get("answer")
+                    done = True
+                    print(f"Final answer: {final_answer}")
+                    break
+                case "add":
+                    try:
+                        result = add(**args)
+                        output = json.dumps({"result": result})
+                        print(f"Result: {result}")
+                    except Exception as e:
+                        output = json.dumps({"error": str(e)})
+                case "multiply":
+                    try:
+                        result = multiply(**args)
+                        output = json.dumps({"result": result})
+                        print(f"Result: {result}")
+                    except Exception as e:
+                        output = json.dumps({"error": str(e)})
+                case _:
+                    output = json.dumps({"error": f"Tool {function_name} not found"})
+
+            if function_name != "final_answer":
+                context.append({
+                    "type": "function_call_output",
+                    "call_id": item.call_id,
+                    "output": output
+                })
 
 if step >= max_steps:
     print(f"\nReached maximum steps ({max_steps})")
