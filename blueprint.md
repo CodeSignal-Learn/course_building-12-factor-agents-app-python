@@ -85,100 +85,55 @@ for item in response.output:
             # Handle cases where the model didn't return valid JSON
             print("Failed to parse JSON from response")
 ```
-### Unit 2 - Writing Tool Schemas for Our Functions
+### Unit 2 - Defining a Tool Schema and Requiring Tool Use
 #### Goal
-Define JSON Schema tool definitions for Python functions and provide them to the model via the OpenAI SDK, reinforcing Factor 4 (Tools are just structured outputs) by treating each function call as a strictly validated JSON object and catching malformed calls before execution.
+Write a tool schema, provide it to the model, and handle the tool-call output, reinforcing Factor 4 (Tools are structured outputs) by parsing a validated JSON call and acting on it. Also see how to require tool use via `tool_choice="required"`.
 
 `main.py`
 ```python
+import json
 import openai
 
-# Define the functions we want to make available to the model
-def add(a: float, b: float) -> float:
-    """Add two numbers together."""
-    return a + b
-
-def multiply(a: float, b: float) -> float:
-    """Multiply two numbers together."""
-    return a * b
-
-# Define tool schemas that describe our functions to the model
-# Each schema follows OpenAI's function calling format (JSON Schema)
-# The model uses these schemas to understand what functions are available and how to call them
+# Define a single tool schema for final_answer
 tool_schemas = [
     {
-        "type": "function",  # Always "function" for function calling
-        "name": "add",  # Function name that the model will use
-        "description": "Add two numbers together",  # Helps the model understand when to use this function
-        "parameters": {
-            "type": "object",  # Parameters are always an object
-            "properties": {
-                "a": {
-                    "type": "number",  # JSON Schema type
-                    "description": "The first number"  # Description helps the model understand the parameter
-                },
-                "b": {
-                    "type": "number",
-                    "description": "The second number"
-                }
-            },
-            "required": ["a", "b"],  # List of required parameters
-            "additionalProperties": False  # Don't allow extra parameters
-        }
-    },
-    {
         "type": "function",
-        "name": "multiply",
-        "description": "Multiply two numbers together",
+        "name": "final_answer",
+        "description": "Provide the final answer and stop.",
         "parameters": {
             "type": "object",
             "properties": {
-                "a": {
-                    "type": "number",
-                    "description": "The first number"
-                },
-                "b": {
-                    "type": "number",
-                    "description": "The second number"
-                }
+                "answer": {"type": "string", "description": "The final answer for the user."}
             },
-            "required": ["a", "b"],
+            "required": ["answer"],
             "additionalProperties": False
         }
     }
 ]
 
 system_prompt = """
-You are a helpful assistant that can perform calculations.
-When asked to do math, you must use the provided tools.
-Never output text directly - always call a tool.
+You are a helpful assistant.
 """
 
-# Call the API with tool schemas provided
-# The model can now see what functions are available and call them
 response = openai.responses.create(
     model="gpt-5",
     instructions=system_prompt,
     input=[
         {
             "role": "user",
-            "content": "What is 15 + 27? Then multiply the result by 3."
+            "content": "What is 15 + 27?"
         }
     ],
     tools=tool_schemas,
+    tool_choice="required",
     reasoning={"effort": "low"}
 )
 
-# Inspect the response to see function calls in the output
-# When tools are provided, the model will respond with function_call items instead of text
-print("Response output:")
+# The model returns a function_call item with JSON arguments
 for item in response.output:
-    print(f"  Type: {item.type}")
-    if item.type == "function_call":
-        # Function calls contain the function name, arguments (as JSON string), and a unique call_id
-        print(f"  Function: {item.name}")
-        print(f"  Arguments: {item.arguments}")  # Arguments are a JSON string
-        print(f"  Call ID: {item.call_id}")  # Used to match responses to calls
+    if item.type == "function_call" and item.name == "final_answer":
+        args = json.loads(item.arguments)
+        print(f"Answer: {args['answer']}")
 ```
 ### Unit 3 - Executing Tool Calls and Managing Context
 #### Goal
@@ -204,8 +159,21 @@ functions = {
     "multiply": multiply
 }
 
-# Define tool schemas for the model
+# Define tool schemas for the model (including final_answer)
 tool_schemas = [
+    {
+        "type": "function",
+        "name": "final_answer",
+        "description": "Provide the final answer and stop.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "answer": {"type": "string", "description": "The final answer for the user."}
+            },
+            "required": ["answer"],
+            "additionalProperties": False
+        }
+    },
     {
         "type": "function",
         "name": "add",
@@ -239,7 +207,7 @@ tool_schemas = [
 system_prompt = """
 You are a helpful assistant that can perform calculations.
 When asked to do math, you must use the provided tools.
-Never output text directly - always call a tool.
+When your work is done, call the final_answer tool.
 """
 
 # Initialize context with the user's message
@@ -247,7 +215,7 @@ Never output text directly - always call a tool.
 context = [
     {
         "role": "user",
-        "content": "Compute 15 + 27"
+        "content": "Compute 15 + 27 and 8 * 11"
     }
 ]
 
@@ -257,6 +225,7 @@ response = openai.responses.create(
     instructions=system_prompt,
     input=context,
     tools=tool_schemas,
+    tool_choice="required",
     reasoning={"effort": "low"}
 )
 
@@ -297,6 +266,7 @@ response = openai.responses.create(
     instructions=system_prompt,
     input=context,
     tools=tool_schemas,
+    tool_choice="required",
     reasoning={"effort": "low"}
 )
 
@@ -375,7 +345,6 @@ tool_schemas = [
 system_prompt = """
 You are a helpful assistant that can perform calculations.
 When asked to do math, you must use the provided tools.
-Never output text directly - always call a tool.
 When your work is done, call the final_answer tool.
 """
 
@@ -404,6 +373,7 @@ while not done and step < max_steps:
         instructions=system_prompt,
         input=context,
         tools=tool_schemas,
+        tool_choice="required",
         reasoning={"effort": "low"}
     )
     
