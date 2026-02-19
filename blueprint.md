@@ -1,4 +1,4 @@
-# Understanding the 12-Factor Agents Methodology
+# Course 1: Understanding the 12-Factor Agents Methodology
 
 ## Overview
 Discover why reliable AI agents require more than delegating work to off‑the‑shelf frameworks. This foundational course introduces the 12‑Factor Agents methodology, distilling lessons that separate flashy demos from production systems. Learn how well‑engineered software augmented with targeted LLM integration—and twelve clear principles—yields maintainable, scalable, and trustworthy agentic apps.
@@ -32,7 +32,7 @@ Grasp the architectural principles that make agents maintainable and scalable. S
 
 ---
 
-# Foundations of Agentic Tool Use in Python
+# Course 2: Foundations of Agentic Tool Use in Python
 
 ## Overview
 Master the practical building blocks of agentic systems in Python. Covering Factors 1, 3, 4, 8, and 9, you’ll prompt for structured outputs, define and validate tool schemas, own the context window, and run explicit loops that you control. You’ll also compact execution errors back into context for self-correction, turning natural language requests into reliable tool executions.
@@ -42,6 +42,8 @@ Master the practical building blocks of agentic systems in Python. Covering Fact
 ### Unit 1 - Prompting LLMs for Structured Outputs
 #### Goal
 Prompting LLMs for Structured Outputs Goal: Teach how to prompt OpenAI models to return structured JSON outputs that can be reliably parsed and processed, grounding this in Factor 1 (Natural Language to Tool Calls) by having the model translate user requests into machine-executable, schema-shaped commands.
+
+#### Files
 
 `main.py`
 ```python
@@ -88,6 +90,8 @@ for item in response.output:
 ### Unit 2 - Defining a Tool Schema and Requiring Tool Use
 #### Goal
 Write a tool schema, provide it to the model, and handle the tool-call output, reinforcing Factor 4 (Tools are structured outputs) by parsing a validated JSON call and acting on it. Also see how to require tool use via `tool_choice="required"`.
+
+#### Files
 
 `main.py`
 ```python
@@ -138,6 +142,8 @@ for item in response.output:
 ### Unit 3 - Executing Tool Calls and Managing Context
 #### Goal
 Demonstrate executing function calls from model responses and feeding results back into the conversation context, introducing Factor 3 (Own your context window) by explicitly controlling what information flows through the agent's memory.
+
+#### Files
 
 `main.py`
 ```python
@@ -276,6 +282,8 @@ print(response.output_text)
 ### Unit 4 - Controlling Loops of Agentic Tool-Use
 #### Goal
 Build an agentic loop that repeatedly calls the LLM, executes tools, and updates context until completion or max steps, implementing Factor 8 (Own your control flow) through explicit loop management and Factor 9 (Compact Errors into Context Window) by feeding execution failures back to the model.
+
+#### Files
 
 `main.py`
 ```python
@@ -428,7 +436,7 @@ if final_answer:
 
 ---
 
-# Developing a Stateless Agent in Python
+# Course 3: Developing a Stateless Agent in Python
 
 ## Overview
 Turn scripts into reusable components by embracing stateless design. With Factors 2, 5, 10, and 12, you’ll externalize prompts, unify execution and business state, and build a reducer-style agent that takes state in and returns state out.
@@ -438,6 +446,8 @@ Turn scripts into reusable components by embracing stateless design. With Factor
 ### Unit 1 - Designing a Stateless Reducer Agent
 #### Goal
 Build an Agent that processes context lists, executes tools via `match/case`, and returns updated context. This implements Factor 12 (stateless reducer) and Factor 10 (small, focused agent). We keep prompts inline for now and introduce prompt files in Unit 2.
+
+#### Files
 
 `src/core/agent.py`
 ```python
@@ -596,7 +606,7 @@ agent = Agent(max_steps=10)
 context = [
     {
         "role": "user",
-        "content": "What is 15 + 27? Then multiply the result by 3."
+        "content": "Solve the root of this equation: x^2 - 5x + 6 = 0"
     }
 ]
 
@@ -742,6 +752,7 @@ def square_root(x: float) -> float:
 #### Goal
 Extract system prompts and context formats to versioned markdown files, and use a serializer to control what the model sees (Factors 2 and 3).
 
+#### Files
 `src/core/prompts/base_system.md`
 ```markdown
 # ROLE
@@ -976,7 +987,7 @@ agent = Agent(max_steps=10)
 context = [
     {
         "role": "user",
-        "content": "What is 15 + 27? Then multiply the result by 3."
+        "content": "Solve the root of this equation: x^2 - 5x + 6 = 0"
     }
 ]
 
@@ -992,6 +1003,7 @@ for item in context:
 #### Goal
 Create a unified State class that combines execution state (steps, status) with business state (context, final_answer), implementing Factor 5 (Unify execution state and business state).
 
+#### Files
 `src/core/models/state.py`
 ```python
 from typing import List, Any, Optional
@@ -1176,7 +1188,7 @@ state = State(
     context=[
         {
             "role": "user",
-            "content": "What is 15 + 27? Then multiply the result by 3."
+            "content": "Solve the root of this equation: x^2 - 5x + 6 = 0"
         }
     ],
     status="running"
@@ -1190,7 +1202,7 @@ print(f"Final answer: {state.final_answer}")
 
 ---
 
-# Exposing Agents with Simple APIs in Python
+# Course 4: Exposing Agents with Simple APIs in Python
 
 ## Overview
 Expose agents as services reachable from any interface. With Factors 5, 6, 7, and 11, you’ll persist unified state in a database, orchestrate runs via background tasks and REST endpoints, and add pause/resume controls. Wire human responses back into waiting workflows and decouple triggers from UI so web apps, bots, and systems can launch, monitor, and resume runs at scale.
@@ -1200,7 +1212,7 @@ Expose agents as services reachable from any interface. With Factors 5, 6, 7, an
 ### Unit 1 - Launching Agents with RESTful APIs
 #### Goal
 Build a FastAPI server with endpoints to launch agents and retrieve state, using in-memory storage and background tasks. By decoupling agent logic from any single interface and exposing it via REST APIs, this unit implements Factor 11 (Trigger from anywhere, meet users where they are).
-
+#### Files
 `src/server/main.py`
 ```python
 import uuid
@@ -1294,7 +1306,7 @@ BASE_URL = "http://localhost:8000"
 # Launch a new agent
 response = requests.post(
     f"{BASE_URL}/agent/launch",
-    json={"input_prompt": "What is 15 + 27? Then multiply the result by 3."}
+    json={"input_prompt": "Solve the root of this equation: x^2 - 5x + 6 = 0"}
 )
 state = response.json()
 print(f"Launched agent with ID: {state['id']}")
@@ -1314,7 +1326,7 @@ while True:
 ### Unit 2 - Persisting States with Databases and Callbacks
 #### Goal
 Replace in-memory storage with SQLite database and add progress callbacks to persist state after each agent step, building on earlier factors to create a production-ready persistence layer.
-
+#### Files
 `src/server/database.py`
 ```python
 import json
@@ -1694,6 +1706,7 @@ def get_state(state_id: str):
 #### Goal
 Add API endpoints to pause running agents and resume paused agents, applying the pause/resume patterns introduced earlier to a real API interface with lifecycle controls.
 
+#### Files
 `src/server/main.py`
 ```python
 import uuid
@@ -1921,7 +1934,7 @@ while True:
 ### Unit 4 - Integrating Human Input Back to Agents
 #### Goal
 Create an API endpoint that accepts human input for waiting agents and automatically resumes execution with the response, completing the human-in-the-loop workflow by wiring user answers back into the agent's context.
-
+#### Files
 `src/server/main.py`
 ```python
 import json
