@@ -1164,7 +1164,9 @@ class Agent:
         return state
 
     def run(self, state: State):
-        # Execution status lives on the same state object.
+        # Create a deep copy to avoid mutating the original
+        state = state.model_copy(deep=True)
+
         state.status = "running"
 
         while state.status == "running" and state.steps < self.max_steps:
@@ -1181,7 +1183,7 @@ import uuid
 from core.agent import Agent
 from core.models.state import State
 
-agent = Agent(max_steps=10)
+agent = Agent()
 
 state = State(
     id=str(uuid.uuid4()),
@@ -1222,28 +1224,9 @@ from typing import Dict
 
 from core.models.state import State
 from core.agent import Agent
-from core.client_tool import ClientTool
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root
-)
-
-# Create tools
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
 
 # Create agent
-agent = Agent(tools=tools, max_steps=10)
+agent = Agent()
 
 # In-memory storage (will be replaced with database in next unit)
 # Using a simple dictionary to store states by ID
@@ -1401,11 +1384,19 @@ def get_db_session():
 ```python
 import json
 import openai
-from typing import List, Any, Optional
+from typing import List, Any
 from pathlib import Path
 
 from core.models.state import State
-from core.client_tool import ClientTool
+from core.tools.functions.math import (
+    sum_numbers,
+    multiply_numbers,
+    subtract_numbers,
+    divide_numbers,
+    power,
+    square_root,
+)
+from core.utils.context_serializer import serialize_context_to_text
 
 class Agent:
     def __init__(
@@ -1413,142 +1404,129 @@ class Agent:
         model: str = "gpt-5",
         reasoning_effort: str = "low",
         extra_instructions: str = "None",
-        max_steps: int = 10,
-        tools: Optional[List[ClientTool]] = None
+        max_steps: int = 10
     ):
         self.model = model
         self.reasoning_effort = reasoning_effort
-        # Load system prompt from markdown file (Factor 2: Own your prompts)
-        # Using Path ensures it works regardless of where the script is run from
         prompt_path = Path(__file__).resolve().parent / "prompts" / "base_system.md"
         self.system_prompt = prompt_path.read_text(encoding="utf-8") + extra_instructions
         self.max_steps = max_steps
-        tools = tools or []
-        self.tools = {tool.name: tool for tool in tools}
-        self.tool_schemas = [tool.schema for tool in tools]
-        # Add built-in final_answer tool
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "final_answer",
-            "description": "Provide the final answer and stop.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "answer": {"type": "string", "description": "The final answer for the user."}
-                },
-                "required": ["answer"],
-                "additionalProperties": False
-            }
-        })
-        # Add built-in ask_human tool
-        self.tool_schemas.append({
-            "type": "function",
-            "name": "ask_human",
-            "description": "Ask the user for clarification or additional information.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "question": {"type": "string", "description": "The question or prompt to ask the user"}
-                },
-                "required": ["question"],
-                "additionalProperties": False
-            }
-        })
+
+        # Load tool schemas from JSON files.
+        schemas_dir = Path(__file__).resolve().parent / "tools" / "schemas"
+        with open(schemas_dir / "math.json", "r", encoding="utf-8") as f:
+            math_schemas = json.load(f)
+        with open(schemas_dir / "final_answer.json", "r", encoding="utf-8") as f:
+            final_answer_schema = json.load(f)
+        with open(schemas_dir / "ask_human.json", "r", encoding="utf-8") as f:
+            ask_human_schema = json.load(f)
+
+        self.tool_schemas = [
+            *math_schemas,
+            final_answer_schema,
+            ask_human_schema,
+        ]
 
     def _call_llm(self, context: List[Any]):
+        # Serialize context to control what the model sees (Factor 3).
+        serialized_content = serialize_context_to_text(context)
+
         response = openai.responses.create(
             model=self.model,
             instructions=self.system_prompt,
-            input=context,
+            input=serialized_content,
             tools=self.tool_schemas,
+            tool_choice="required",
             reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
         )
         return response
 
-    def _call_tool(self, function_call: dict):
-        # Execute a tool call and return the result in the expected format
-        tool_name = function_call["name"]
-        call_id = function_call["call_id"]
-        tool_input = function_call["arguments"]  # Already a dict
-        
-        try:
-            # Look up the tool and execute it
-            result = self.tools[tool_name].execute(**tool_input)
-        except KeyError:
-            # Tool not found in our registry
-            result = f"Error: Tool {tool_name} not found"
-        except Exception as e:
-            # Tool execution failed
-            result = f"Error: {str(e)}"
-        
-        # Return result in the format expected by the Responses API
-        return {
-            "type": "function_call_output",
-            "call_id": call_id,  # Match with the original call
-            "output": json.dumps({"result": result})  # Must be JSON string
-        }
-
     def _next_step(self, state: State):
-        # Execute one step: process pending tool calls, then call LLM for new ones
         state.steps += 1
-        
-        # Process all pending tool calls from previous step
-        # Use list() to create a copy so we can safely remove items during iteration
+
         for function_call in list(state.pending_tool_calls):
             call_name = function_call["name"]
-            call_arguments = function_call["arguments"]  # Already a dict
+            call_arguments = function_call["arguments"]
             call_id = function_call["call_id"]
-            
-            # Add function call to context for transparency
+
             state.context.append({
                 "type": "function_call",
                 "name": call_name,
-                "arguments": json.dumps(call_arguments),  # Serialize to JSON string for storage
+                "arguments": json.dumps(call_arguments),
                 "call_id": call_id
             })
-            
-            # Handle ask_human tool (Factor 7: Contact humans with tool calls)
+
             if call_name == "ask_human":
-                # Don't execute the tool here - wait for human input
                 state.pending_tool_calls.remove(function_call)
-                state.status = "waiting_human_input"  # Signal that we're waiting
-                return state  # Stop execution until human responds
-            
-            # Handle special control tools
+                state.status = "waiting_human_input"
+                return state
+
             if call_name == "final_answer":
-                # Agent is done, clear pending calls and set status
                 state.pending_tool_calls = []
                 state.status = "complete"
-                state.final_answer = call_arguments.get("answer")
+                state.final_answer = call_arguments.get("answer") or None
                 return state
-            
-            # Execute regular tool and add result to context
-            result = self._call_tool({
-                "name": call_name,
-                "arguments": call_arguments,
-                "call_id": call_id
-            })
+
+            match call_name:
+                case "sum_numbers":
+                    try:
+                        result = sum_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "multiply_numbers":
+                    try:
+                        result = multiply_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "subtract_numbers":
+                    try:
+                        result = subtract_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "divide_numbers":
+                    try:
+                        result = divide_numbers(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "power":
+                    try:
+                        result = power(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case "square_root":
+                    try:
+                        result = square_root(**call_arguments)
+                        output = json.dumps({"result": result})
+                    except Exception as e:
+                        output = json.dumps({"result": f"Error: {str(e)}"})
+                case _:
+                    output = json.dumps({"result": f"Error: Tool {call_name} not found"})
+
             state.pending_tool_calls.remove(function_call)
-            state.context.append(result)
-        
-        # Call LLM with updated context (includes tool results)
+            state.context.append({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": output
+            })
+
         response = self._call_llm(state.context)
-        
-        # Extract new function calls from LLM response
         function_calls = [item for item in response.output if item.type == "function_call"]
-        
-        # Convert SDK objects to plain dicts for storage in state
+
         function_call_dicts = [
             {
                 "name": fc.name,
-                "arguments": json.loads(fc.arguments),  # Parse JSON string to dict
+                "arguments": json.loads(fc.arguments),
                 "call_id": fc.call_id,
                 "type": fc.type
             }
             for fc in function_calls
         ]
-        
-        # Add new function calls to pending list (will be processed in next step)
+
         state.pending_tool_calls.extend(function_call_dicts)
         return state
 
@@ -1562,24 +1540,22 @@ class Agent:
             state: The state to run
             progress_callback: Optional callback(state) called after each step
         """
-        # Ensure state is set to running
+        # Keep run() non-mutating for callers by working on a deep copy.
+        state = state.model_copy(deep=True)
+
         state.status = "running"
-        
-        # Calculate max steps: if resuming (steps > 0), allow continuing from current step count
+
         is_resuming = state.steps > 0
         max_steps_allowed = (self.max_steps + state.steps) if is_resuming else self.max_steps
-        
-        # Call next step until complete or waiting_human_input
+
         while state.status == "running" and state.steps < max_steps_allowed:
             state = self._next_step(state)
-            # Call progress callback if provided (allows saving state after each step)
             if progress_callback:
                 progress_callback(state)
-        
-        # If still running and max steps reached, set status to max_steps_reached
+
         if state.status == "running" and state.steps >= max_steps_allowed:
             state.status = "max_steps_reached"
-        
+
         return state
 ```
 
@@ -1591,29 +1567,10 @@ from pydantic import BaseModel
 
 from core.models.state import State
 from core.agent import Agent
-from core.client_tool import ClientTool
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root
-)
 from server.database import get_db_session, StateModel, pydantic_to_db, db_to_pydantic
 
-# Create tools
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
-
 # Create agent
-agent = Agent(tools=tools, max_steps=10)
+agent = Agent(max_steps=10)
 
 app = FastAPI()
 
@@ -1716,27 +1673,9 @@ from typing import Optional
 
 from core.models.state import State
 from core.agent import Agent
-from core.client_tool import ClientTool
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root
-)
 from server.database import get_db_session, StateModel, pydantic_to_db, db_to_pydantic
 
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
-
-agent = Agent(tools=tools, max_steps=10)
+agent = Agent()
 
 app = FastAPI()
 
@@ -1875,7 +1814,11 @@ def agent_resume(payload: ResumeRequest, background_tasks: BackgroundTasks):
         # Prevent concurrent execution
         if db_state.status == "running":
             raise HTTPException(status_code=409, detail="Agent is already running")
-        
+
+        # If waiting for ask_human, require provide_input instead of resume
+        if db_state.status == "waiting_human_input":
+            raise HTTPException(status_code=400, detail="Agent is waiting for human input")
+
         # Convert to Pydantic
         working_state = db_to_pydantic(db_state)
     
@@ -1938,6 +1881,7 @@ Create an API endpoint that accepts human input for waiting agents and automatic
 `src/server/main.py`
 ```python
 import json
+import logging
 import uuid
 from fastapi import FastAPI, BackgroundTasks, HTTPException
 from pydantic import BaseModel
@@ -1945,27 +1889,11 @@ from typing import Optional
 
 from core.models.state import State
 from core.agent import Agent
-from core.client_tool import ClientTool
-from core.tools.math import (
-    sum_numbers,
-    multiply_numbers,
-    subtract_numbers,
-    divide_numbers,
-    power,
-    square_root
-)
 from server.database import get_db_session, StateModel, pydantic_to_db, db_to_pydantic
 
-tools = [
-    ClientTool(name="sum_numbers", description="Sum two numbers", function=sum_numbers),
-    ClientTool(name="multiply_numbers", description="Multiply two numbers", function=multiply_numbers),
-    ClientTool(name="subtract_numbers", description="Subtract two numbers", function=subtract_numbers),
-    ClientTool(name="divide_numbers", description="Divide two numbers", function=divide_numbers),
-    ClientTool(name="power", description="Raise a number to a power", function=power),
-    ClientTool(name="square_root", description="Take the square root of a number", function=square_root)
-]
+logging.basicConfig(level=logging.INFO)
 
-agent = Agent(tools=tools, max_steps=10)
+agent = Agent()
 
 app = FastAPI()
 
@@ -2005,6 +1933,27 @@ def _create_progress_callback(state_id: str):
                 session.commit()
     return save_progress
 
+def _save_state_to_db(state_id: str, state: State):
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+        if db_state:
+            db_state.steps = state.steps
+            db_state.status = state.status
+            db_state.context = state.context
+            db_state.pending_tool_calls = state.pending_tool_calls
+            db_state.error = state.error
+            db_state.final_answer = state.final_answer
+            session.commit()
+
+def _mark_state_failed(state_id: str, error: str):
+    with get_db_session() as session:
+        db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+        if db_state:
+            db_state.status = "failed"
+            db_state.error = error
+            db_state.pending_tool_calls = []
+            session.commit()
+
 def _get_call_id_from_state(state: State) -> Optional[str]:
     """Extract the call_id from the last ask_human call in context"""
     # Search backwards through context to find the most recent ask_human call
@@ -2016,34 +1965,31 @@ def _get_call_id_from_state(state: State) -> Optional[str]:
 
 def _run_agent_in_background(state_id: str, working_state: Optional[State] = None):
     """Run the agent in a background thread and update the database"""
-    if working_state is None:
-        with get_db_session() as session:
-            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
-            if not db_state:
-                return
-            db_state.status = "running"
-            session.commit()
-            working_state = db_to_pydantic(db_state)
-    else:
-        with get_db_session() as session:
-            db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
-            if db_state:
+    try:
+        if working_state is None:
+            with get_db_session() as session:
+                db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+                if not db_state:
+                    return
                 db_state.status = "running"
+                db_state.error = None
                 session.commit()
-    
-    save_progress = _create_progress_callback(state_id)
-    final_state = agent.run(working_state, progress_callback=save_progress)
-    
-    with get_db_session() as session:
-        db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
-        if db_state:
-            db_state.steps = final_state.steps
-            db_state.status = final_state.status
-            db_state.context = final_state.context
-            db_state.pending_tool_calls = final_state.pending_tool_calls
-            db_state.error = final_state.error
-            db_state.final_answer = final_state.final_answer
-            session.commit()
+                working_state = db_to_pydantic(db_state)
+        else:
+            with get_db_session() as session:
+                db_state = session.query(StateModel).filter(StateModel.id == state_id).first()
+                if db_state:
+                    db_state.status = "running"
+                    db_state.error = None
+                    session.commit()
+
+        save_progress = _create_progress_callback(state_id)
+        final_state = agent.run(working_state, progress_callback=save_progress)
+        _save_state_to_db(state_id, final_state)
+    except Exception as e:
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in background agent execution for {state_id}: {e}")
+        _mark_state_failed(state_id, str(e))
 
 @app.post("/agent/launch", response_model=State)
 def agent_launch(payload: LaunchRequest, background_tasks: BackgroundTasks):
@@ -2104,7 +2050,11 @@ def agent_resume(payload: ResumeRequest, background_tasks: BackgroundTasks):
         
         if db_state.status == "running":
             raise HTTPException(status_code=409, detail="Agent is already running")
-        
+
+        # If waiting for ask_human, require provide_input instead of resume
+        if db_state.status == "waiting_human_input":
+            raise HTTPException(status_code=400, detail="Agent is waiting for human input")
+
         working_state = db_to_pydantic(db_state)
     
     background_tasks.add_task(_run_agent_in_background, payload.id, working_state)
