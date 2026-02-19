@@ -190,6 +190,8 @@ class Agent:
             state: The state to run
             progress_callback: Optional callback(state) called after each step
         """
+        state = state.model_copy(deep=True)
+
         # Ensure state is set to running
         state.status = "running"
         
