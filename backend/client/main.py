@@ -3,7 +3,7 @@ import requests
 import time
 from typing import Optional, Dict, Any
 
-from core.tools.human_interaction import ask_human_cli
+from core.tools.functions.human_interaction import ask_human_cli
 
 
 class Client:
