@@ -194,20 +194,29 @@ class Agent:
 
         # Ensure state is set to running
         state.status = "running"
+        state.error = None
         
         # Calculate max steps: if resuming (steps > 0), allow continuing from current step count
         is_resuming = state.steps > 0
         max_steps_allowed = (self.max_steps + state.steps) if is_resuming else self.max_steps
 
-        # Call next step until complete or waiting_human_input
-        while state.status == "running" and state.steps < max_steps_allowed:
-            state = self._next_step(state)
-            # Call progress callback if provided
+        try:
+            # Call next step until complete or waiting_human_input
+            while state.status == "running" and state.steps < max_steps_allowed:
+                state = self._next_step(state)
+                # Call progress callback if provided
+                if progress_callback:
+                    progress_callback(state)
+
+            # If still running and max steps reached, set status to max_steps_reached
+            if state.status == "running" and state.steps >= max_steps_allowed:
+                state.status = "max_steps_reached"
+            
+            return state
+        except Exception as e:
+            state.status = "failed"
+            state.error = str(e)
+            state.pending_tool_calls = []
             if progress_callback:
                 progress_callback(state)
-
-        # If still running and max steps reached, set status to max_steps_reached
-        if state.status == "running" and state.steps >= max_steps_allowed:
-            state.status = "max_steps_reached"
-        
-        return state
+            return state
