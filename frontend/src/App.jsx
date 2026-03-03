@@ -9,7 +9,7 @@ import './App.css'
 
 const TERMINAL_STATUSES = ['complete', 'failed', 'max_steps_reached']
 const NON_RESUMABLE_STATUSES = ['complete', 'failed'] // Statuses that cannot be resumed
-const POLL_INTERVAL = 2000 // 2 seconds
+const POLL_INTERVAL = 500 // 500 ms
 
 function App() {
   const [agents, setAgents] = useState([])
@@ -50,7 +50,15 @@ function App() {
       clearInterval(pollingIntervalRef.current)
     }
 
+    let isRequestInFlight = false
+
     pollingIntervalRef.current = setInterval(async () => {
+      if (isRequestInFlight) {
+        return
+      }
+
+      isRequestInFlight = true
+
       try {
         const state = await agentAPI.getState(agentId)
         updateAgentState(state)
@@ -70,6 +78,8 @@ function App() {
         }
       } catch (error) {
         console.error('Error polling agent state:', error)
+      } finally {
+        isRequestInFlight = false
       }
     }, POLL_INTERVAL)
   }
@@ -250,4 +260,3 @@ function App() {
 }
 
 export default App
-
