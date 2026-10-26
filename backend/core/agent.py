@@ -17,7 +17,7 @@ from core.utils.context_serializer import serialize_context_to_text
 class Agent:
     def __init__(
         self,
-        model: str = "gpt-5",
+        model: str = "gpt-6-luna",
         reasoning_effort: str = "low",
         extra_instructions: str = "None",
         max_steps: int = 10
@@ -57,7 +57,7 @@ class Agent:
             input=serialized_content,
             tools=self.tool_schemas,
             tool_choice="required",
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
+            reasoning={"effort": self.reasoning_effort}
         )
         return response
 

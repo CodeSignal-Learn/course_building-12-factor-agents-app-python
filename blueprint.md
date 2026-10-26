@@ -61,7 +61,7 @@ You are a helpful assistant that only answers with the following JSON schema:
 # Make a request to the Responses API
 # The input is a list of messages, starting with the user's question
 response = openai.responses.create(
-    model="gpt-5",
+    model="gpt-6-luna",
     instructions=system_prompt,
     input=[
         {
@@ -120,7 +120,7 @@ You are a helpful assistant.
 """
 
 response = openai.responses.create(
-    model="gpt-5",
+    model="gpt-6-luna",
     instructions=system_prompt,
     input=[
         {
@@ -227,7 +227,7 @@ context = [
 
 # First API call: the model will see the user's request and available tools
 response = openai.responses.create(
-    model="gpt-5",
+    model="gpt-6-luna",
     instructions=system_prompt,
     input=context,
     tools=tool_schemas,
@@ -268,7 +268,7 @@ for item in response.output:
 # Second API call: the model sees the function calls and their results
 # It can now continue with the next step or provide a final answer
 response = openai.responses.create(
-    model="gpt-5",
+    model="gpt-6-luna",
     instructions=system_prompt,
     input=context,
     tools=tool_schemas,
@@ -371,7 +371,7 @@ while not done and step < max_steps:
     
     # Call the LLM with current context
     response = openai.responses.create(
-        model="gpt-5",
+        model="gpt-6-luna",
         instructions=system_prompt,
         input=context,
         tools=tool_schemas,
@@ -467,7 +467,7 @@ from core.tools.functions.math import (
 class Agent:
     def __init__(
         self,
-        model: str = "gpt-5",
+        model: str = "gpt-6-luna",
         reasoning_effort: str = "low",
         extra_instructions: str = "",
         max_steps: int = 10
@@ -502,7 +502,7 @@ class Agent:
             input=context,
             tools=self.tool_schemas,
             tool_choice="required",
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
+            reasoning={"effort": self.reasoning_effort}
         )
         return response
 
@@ -856,7 +856,7 @@ from core.utils.context_serializer import serialize_context_to_text
 class Agent:
     def __init__(
         self,
-        model: str = "gpt-5",
+        model: str = "gpt-6-luna",
         reasoning_effort: str = "low",
         extra_instructions: str = "",
         max_steps: int = 10
@@ -889,7 +889,7 @@ class Agent:
             input=serialized_content,
             tools=self.tool_schemas,
             tool_choice="required",
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
+            reasoning={"effort": self.reasoning_effort}
         )
         return response
 
@@ -1041,7 +1041,7 @@ from core.utils.context_serializer import serialize_context_to_text
 class Agent:
     def __init__(
         self,
-        model: str = "gpt-5",
+        model: str = "gpt-6-luna",
         reasoning_effort: str = "low",
         extra_instructions: str = "",
         max_steps: int = 10
@@ -1072,7 +1072,7 @@ class Agent:
             input=serialized_content,
             tools=self.tool_schemas,
             tool_choice="required",
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
+            reasoning={"effort": self.reasoning_effort}
         )
         return response
 
@@ -1401,7 +1401,7 @@ from core.utils.context_serializer import serialize_context_to_text
 class Agent:
     def __init__(
         self,
-        model: str = "gpt-5",
+        model: str = "gpt-6-luna",
         reasoning_effort: str = "low",
         extra_instructions: str = "None",
         max_steps: int = 10
@@ -1437,7 +1437,7 @@ class Agent:
             input=serialized_content,
             tools=self.tool_schemas,
             tool_choice="required",
-            reasoning={"effort": self.reasoning_effort} if self.model == "gpt-5" else None
+            reasoning={"effort": self.reasoning_effort}
         )
         return response
 
